@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { computeAvailableStock, type AdjustmentLike } from "@/lib/availableStock";
 
-const T = (s: string) => new Date(s);
+// 시간대 없는 문자열은 서울(+09:00)로 해석 — 서버 TZ와 무관하게 동일한 결과
+const T = (s: string) => new Date(`${s}+09:00`);
 const adj = (
   qtyBox: number,
   reason: AdjustmentLike["reason"],
