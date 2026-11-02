@@ -82,3 +82,41 @@ describe("helpers", () => {
     ]);
   });
 });
+
+describe("applyMapping 부분일치", () => {
+  it("괄호·단위가 붙은 헤더도 통과한다", () => {
+    const m = applyMapping(
+      [
+        ["품 번", "품명/규격", "재고수량(박스)"],
+        ["TM00329", "x", "12"],
+      ],
+      STOCK_MAPPING,
+    );
+    expect(m.ok).toBe(true);
+    if (m.ok) expect(m.rows[0]).toMatchObject({ productCode: "TM00329", qtyBox: "12" });
+  });
+
+  it("정확히 일치하는 컬럼을 먼저 쓰고, 부분일치는 남은 컬럼에서만 고른다", () => {
+    const m = applyMapping([["생산품번", "품번", "현재고 (BOX)"]], STOCK_MAPPING);
+    expect(m.ok).toBe(true);
+    if (m.ok) expect(m.columns.productCode).toBe(1);
+  });
+
+  it("후보를 포함하는 헤더가 여럿이면 가장 짧은 것을 고른다", () => {
+    const m = applyMapping([["제품코드_구", "제품코드", "재고수량(박스)"]], STOCK_MAPPING);
+    expect(m.ok).toBe(true);
+    if (m.ok) expect(m.columns.productCode).toBe(1);
+  });
+
+  it("판매실적: 포장단위수량이 정확히 배정되면 포장단위 부분일치 대상에서 빠진다", () => {
+    const m = applyMapping(
+      [["출고일자", "출고구분", "판매형태", "품번", "품명/규격", "거래선", "포장단위수량", "출고수량"]],
+      SALES_MAPPING,
+    );
+    expect(m.ok).toBe(true);
+    if (m.ok) {
+      expect(m.columns.unitsPerBox).toBe(6);
+      expect(m.columns.packUnit).toBeNull();
+    }
+  });
+});

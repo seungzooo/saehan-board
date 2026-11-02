@@ -19,26 +19,57 @@ export function normalizeHeader(h: string): string {
   return h.replace(/\s+/g, "").replace(/^\uFEFF/, "").toLowerCase();
 }
 
+/**
+ * 헤더 매칭 규칙 (두 단계)
+ *  1. 정확히 일치 (공백·대소문자 무시): "품 번" = "품번"
+ *  2. 부분일치: 헤더가 후보를 포함하면 통과 — "재고수량(박스)", "재고수량 (BOX)" 모두 "재고수량"으로 인식.
+ *     1단계에서 이미 다른 필드에 배정된 컬럼은 제외하고, 여러 개면 가장 짧은 헤더를 고른다.
+ *     (예: "포장단위수량"이 unitsPerBox에 정확히 배정됐으면 packUnit의 "포장단위" 부분일치 대상에서 빠진다)
+ */
 export function applyMapping<F extends string>(
   sheet: string[][],
   mapping: ColumnMapping<F>,
 ): MappedRows<F> | MappingError {
   if (sheet.length === 0) return { ok: false, missing: ["(빈 파일)"], headerFound: [] };
   const header = sheet[0].map(normalizeHeader);
+  const fields = Object.keys(mapping) as F[];
   const columns = {} as Record<F, number | null>;
-  const missing: string[] = [];
-  for (const field of Object.keys(mapping) as F[]) {
-    const spec = mapping[field];
+  const used = new Set<number>();
+
+  // 1단계: 정확히 일치
+  for (const field of fields) {
     let idx: number | null = null;
-    for (const cand of spec.headers) {
+    for (const cand of mapping[field].headers) {
       const i = header.indexOf(normalizeHeader(cand));
-      if (i >= 0) {
+      if (i >= 0 && !used.has(i)) {
         idx = i;
         break;
       }
     }
     columns[field] = idx;
-    if (idx === null && spec.required) missing.push(spec.headers.join(" / "));
+    if (idx !== null) used.add(idx);
+  }
+
+  // 2단계: 부분일치 (아직 못 찾은 필드만)
+  for (const field of fields) {
+    if (columns[field] !== null) continue;
+    let best: number | null = null;
+    for (const cand of mapping[field].headers) {
+      const key = normalizeHeader(cand);
+      if (!key) continue;
+      for (let i = 0; i < header.length; i++) {
+        if (used.has(i) || !header[i].includes(key)) continue;
+        if (best === null || header[i].length < header[best].length) best = i;
+      }
+      if (best !== null) break;
+    }
+    columns[field] = best;
+    if (best !== null) used.add(best);
+  }
+
+  const missing: string[] = [];
+  for (const field of fields) {
+    if (columns[field] === null && mapping[field].required) missing.push(mapping[field].headers.join(" / "));
   }
   if (missing.length > 0) return { ok: false, missing, headerFound: sheet[0] };
 

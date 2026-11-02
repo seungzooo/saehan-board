@@ -4,6 +4,8 @@
  *
  * 각 항목: 앱 필드명 → 엑셀 헤더 후보 목록 (앞에서부터 먼저 발견된 헤더 사용).
  * 헤더는 trim + 내부 공백 제거 후 비교하므로 "품 번"과 "품번"은 같은 것으로 본다.
+ * 정확히 일치하는 헤더가 없으면 후보를 포함하는 헤더를 찾는다 — "재고수량(박스)"도 "재고수량"으로 통과.
+ * (세부 규칙: lib/excel/mapping.ts applyMapping)
  */
 
 export type ColumnMapping<F extends string> = {

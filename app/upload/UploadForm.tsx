@@ -7,7 +7,7 @@ import { useRef, useState, useTransition } from "react";
 import { uploadAction } from "./actions";
 
 const TABS: { kind: UploadKind; label: string; hint: string }[] = [
-  { kind: "STOCK", label: "재고", hint: "ERP 재고 엑셀. 품번 / 품명/규격 / 재고수량(박스)" },
+  { kind: "STOCK", label: "재고", hint: "ERP 재고 엑셀. 필수 컬럼: 품번, 재고수량 (박스 단위). 품명/규격은 선택. 컬럼명에 괄호·단위가 붙어도 됩니다 — 예: 재고수량(박스), 품 번" },
   { kind: "PRODUCTION", label: "생산실적", hint: "팀별 파일(1211·1212·1219)을 각각 올리세요" },
   { kind: "SALES", label: "출고실적", hint: "연도별 판매실적 파일" },
   { kind: "PRODUCT", label: "제품 마스터", hint: "품번 / 품명/규격 / 포장단위수량 / 가로·세로·높이(mm)" },
@@ -135,7 +135,7 @@ function ResultCard({ r }: { r: UploadResponse }) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
         <p className="font-semibold">컬럼이 맞지 않아 저장하지 않았습니다.</p>
-        <p className="mt-2">찾지 못한 필수 컬럼:</p>
+        <p className="mt-2">찾지 못한 필수 컬럼 (아래 이름 중 하나를 포함하는 헤더가 있어야 합니다. 공백·괄호·단위는 무시):</p>
         <ul className="list-disc pl-5">
           {r.missing.map((m) => (
             <li key={m} className="font-mono">
