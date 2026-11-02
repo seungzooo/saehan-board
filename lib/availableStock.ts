@@ -11,6 +11,8 @@
  * 이 파일은 DB에 의존하지 않는다 — 순수 계산. 테스트: tests/availableStock.test.ts
  */
 
+import { isSameSeoulDay } from "@/lib/format";
+
 export type AdjustmentReason = "DEFECT" | "SHIPMENT" | "ORDER" | "OTHER";
 export const ADJUSTMENT_REASONS: AdjustmentReason[] = ["DEFECT", "SHIPMENT", "ORDER", "OTHER"];
 export const REASON_LABEL: Record<AdjustmentReason, string> = {
@@ -34,7 +36,7 @@ export type AvailableStock = {
   hasBaseline: boolean;
   uploadedAt: Date | null;
   deductions: Record<AdjustmentReason, number>;
-  todayDeduction: number; // 오늘(로컬 날짜) 미취소 변동 합 — 화면 표시용
+  todayDeduction: number; // 오늘(Asia/Seoul 날짜) 미취소 변동 합 — 화면 표시용
 };
 
 export type ComputeOptions = {
@@ -46,9 +48,6 @@ export function defectResetFromEnv(): boolean {
   return (process.env.DEFECT_RESET_ON_UPLOAD ?? "false").toLowerCase() === "true";
 }
 
-function sameLocalDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
 
 export function computeAvailableStock(
   snapshot: SnapshotLike,
@@ -66,7 +65,7 @@ export function computeAvailableStock(
   for (const a of adjustments) {
     if (a.cancelledAt) continue;
     const reason = (ADJUSTMENT_REASONS as string[]).includes(a.reason) ? (a.reason as AdjustmentReason) : "OTHER";
-    if (sameLocalDay(a.createdAt, now)) todayDeduction += a.qtyBox;
+    if (isSameSeoulDay(a.createdAt, now)) todayDeduction += a.qtyBox;
 
     const afterUpload = since === null || a.createdAt > since;
     const counts = reason === "DEFECT" && !defectReset ? true : afterUpload;

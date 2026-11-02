@@ -2,6 +2,7 @@
 
 import type { AdjustmentItem } from "@/lib/adjust";
 import { REASON_LABEL, type AvailableStock } from "@/lib/availableStock";
+import { formatShort } from "@/lib/format";
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { cancelAdjustmentAction, createAdjustmentAction, searchProductsAction, type ProductHit } from "./actions";
@@ -16,11 +17,6 @@ const REASONS = [
   { value: "OTHER", label: "기타" },
 ] as const;
 
-function fmt(iso: string) {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 
 export default function AdjustForm({
   preselected,
@@ -254,7 +250,7 @@ export default function AdjustForm({
                     <p className="truncate font-medium">{it.productName}</p>
                     <p className="text-xs text-zinc-500">
                       {REASON_LABEL[it.reason as keyof typeof REASON_LABEL] ?? it.reason} −{it.qtyBox.toLocaleString()}
-                      {it.memo && ` · ${it.memo}`} · {fmt(it.createdAt)} {it.createdBy}
+                      {it.memo && ` · ${it.memo}`} · {formatShort(it.createdAt)} {it.createdBy}
                     </p>
                   </div>
                   {cancelled ? (

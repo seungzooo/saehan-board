@@ -2,6 +2,7 @@
 
 import type { UploadKind } from "@/config/excel-mapping";
 import type { UploadResponse } from "@/lib/excel/upload";
+import { formatDateTime } from "@/lib/format";
 import { useRef, useState, useTransition } from "react";
 import { uploadAction } from "./actions";
 
@@ -13,11 +14,6 @@ const TABS: { kind: UploadKind; label: string; hint: string }[] = [
   { kind: "CUSTOMER", label: "거래처", hint: "거래선 / 구분(B2B·B2C) / 주문단위(차량·박스)" },
 ];
 
-function fmt(iso: string) {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 
 export default function UploadForm({ initialKind }: { initialKind: UploadKind }) {
   const [kind, setKind] = useState<UploadKind>(initialKind);
@@ -98,7 +94,7 @@ function ResultCard({ r }: { r: UploadResponse }) {
           저장 완료 — {x.inserted.toLocaleString()}행 ({(r.elapsedMs / 1000).toFixed(1)}초)
         </p>
         <ul className="mt-2 space-y-1 text-green-900">
-          <li>업로드 시각: {fmt(r.uploadedAt)}</li>
+          <li>업로드 시각: {formatDateTime(r.uploadedAt)}</li>
           <li>파일 형식: {r.format}</li>
           {x.period && (
             <li>
@@ -130,7 +126,7 @@ function ResultCard({ r }: { r: UploadResponse }) {
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         <p className="font-semibold">이미 업로드된 파일입니다. 다시 저장하지 않았습니다.</p>
         <p className="mt-1">
-          {r.fileName} · {fmt(r.uploadedAt)}
+          {r.fileName} · {formatDateTime(r.uploadedAt)}
         </p>
       </div>
     );
