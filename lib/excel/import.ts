@@ -28,7 +28,7 @@ export type ImportResult = {
   ok: true;
   inserted: number;
   skipped: number;
-  errors: RowError[]; // 앞 50건만 보관
+  errors: RowError[]; // 전체 보관 (화면은 앞 20건만 표시)
   newProducts: number;
   newCustomers: number;
   updated?: number; // 마스터 업로드: 기존 행 갱신 수 / 재고: 기존 품목 수
@@ -42,7 +42,7 @@ export type ImportOutcome = ImportResult | ImportFailure;
 type ProductSeed = { name: string; itemType?: string; capacity?: string; packUnit?: string; unitsPerBox?: number };
 
 function pushErr(errs: RowError[], row: number, message: string) {
-  if (errs.length < 50) errs.push({ row, message });
+  errs.push({ row, message });
 }
 
 async function chunked<T>(items: T[], fn: (chunk: T[]) => Promise<unknown>) {
@@ -105,7 +105,7 @@ async function ensureCustomers(db: Db, names: Set<string>): Promise<number> {
 export async function importStock(
   db: Db,
   sheet: string[][],
-  ctx: { batchId: string; uploadedBy: string; uploadedAt: Date },
+  ctx: { batchId: string; uploadedBy: string; uploadedAt: Date; stockAsOf: Date | null },
 ): Promise<ImportOutcome> {
   const mapped = applyMapping(sheet, STOCK_MAPPING);
   if (!mapped.ok) return mapped;
@@ -133,6 +133,7 @@ export async function importStock(
     productCode,
     qtyBox: Math.round(q),
     uploadedAt: ctx.uploadedAt,
+    stockAsOf: ctx.stockAsOf,
     uploadedBy: ctx.uploadedBy,
     batchId: ctx.batchId,
   }));

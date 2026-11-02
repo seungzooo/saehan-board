@@ -37,13 +37,15 @@ model Product {
 
 /// 엑셀 업로드 1회 = 1 batch. fileHash로 같은 파일 재업로드 감지
 model UploadBatch {
-  id         String   @id @default(cuid())
-  kind       String // STOCK | SALES | PRODUCTION | PRODUCT | CUSTOMER
-  fileName   String
-  fileHash   String   @unique
-  rowCount   Int
-  uploadedAt DateTime @default(now())
-  uploadedBy String
+  id            String    @id @default(cuid())
+  kind          String // STOCK | SALES | PRODUCTION | PRODUCT | CUSTOMER
+  fileName      String
+  fileHash      String    @unique
+  rowCount      Int
+  uploadedAt    DateTime  @default(now()) // 앱에 반영된 시각
+  uploadedBy    String
+  stockAsOf     DateTime? // (STOCK) 파일의 집계 기준 시각. 담당자 입력, 없으면 "집계 시각 미확인"
+  defectApplied Boolean   @default(false) // (STOCK) 파일에 사후 불량이 반영되어 있음 → 이전 불량 차감 리셋
 
   snapshots   StockSnapshot[]
   productions ProductionHistory[]
@@ -52,10 +54,11 @@ model UploadBatch {
 
 /// 기초재고 스냅샷. 같은 batchId를 공유하는 행들이 한 번의 업로드
 model StockSnapshot {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   productCode String
   qtyBox      Int
-  uploadedAt  DateTime @default(now())
+  uploadedAt  DateTime  @default(now()) // 반영 시각
+  stockAsOf   DateTime? // 집계 기준 시각 (batch와 동일 값, 조회 편의)
   uploadedBy  String
   batchId     String
 
@@ -158,16 +161,6 @@ model Vehicle {
 model ExternalIndex {
   yearMonth          String @id // YYYY-MM
   kosisShipmentIndex Float
-}
-
-model User {
-  id           Int      @id @default(autoincrement())
-  loginId      String   @unique
-  passwordHash String
-  name         String
-  role         String // SALES | STOCK | ADMIN
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
 }
 
 /// 월별 집계 (F5·F6). 실적 업로드 때마다 전체 재계산

@@ -8,7 +8,6 @@
  * 3. MonthlyStat 재계산
  * 4. 개발용 기초재고: 교집합(isProduced) 품번에 대해 최근 30일 출고 박스 × 1.5
  *    (재고 엑셀 샘플을 받으면 F1 업로드로 교체)
- * 5. 개발용 사용자 3명 (admin / stock / sales, 비밀번호는 아이디 + "1234")
  */
 import "dotenv/config";
 import fs from "node:fs";
@@ -17,7 +16,6 @@ import { parseCsvText } from "../lib/excel/csv";
 import { importProduction, importSales } from "../lib/excel/import";
 import { rebuildMonthlyStat } from "../lib/analytics/monthlyStat";
 import { createPrisma } from "../lib/db";
-import { hashPassword } from "../lib/password";
 
 const CLEAN_DIR = path.join(process.cwd(), "docs", "data", "clean");
 const SALES_CSV = path.join(CLEAN_DIR, "sales_2021_2025.csv");
@@ -104,21 +102,6 @@ async function main() {
     for (let i = 0; i < data.length; i += 500) await prisma.stockSnapshot.createMany({ data: data.slice(i, i + 500) });
     log(`개발용 기초재고 ${data.length}품목 (출고 기준일 ${to.toISOString().slice(0, 10)})`);
   }
-
-  // 5. 개발용 사용자
-  const users = [
-    { loginId: "admin", name: "관리자", role: "ADMIN" },
-    { loginId: "stock", name: "재고담당", role: "STOCK" },
-    { loginId: "sales", name: "영업담당", role: "SALES" },
-  ];
-  for (const u of users) {
-    await prisma.user.upsert({
-      where: { loginId: u.loginId },
-      update: {},
-      create: { ...u, passwordHash: hashPassword(`${u.loginId}1234`) },
-    });
-  }
-  log(`사용자 ${users.length}명 (비밀번호: 아이디 + "1234")`);
 
   await prisma.$disconnect();
   log("완료");

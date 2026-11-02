@@ -1,14 +1,10 @@
 import { listRecentAdjustments } from "@/lib/adjust";
-import { canAdjust, getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { redirect } from "next/navigation";
 import AdjustForm from "./AdjustForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdjustPage({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
-  const user = await getCurrentUser();
-  if (!canAdjust(user)) redirect("/stock");
   const { code } = await searchParams;
 
   const [preselected, recent] = await Promise.all([

@@ -45,27 +45,65 @@ describe("computeAvailableStock", () => {
     expect(after.deductions.SHIPMENT).toBe(5);
   });
 
-  it("불량 차감은 기본값으로 리셋하지 않고 누적한다", () => {
-    const adjustments = [adj(4, "DEFECT", "2026-01-10T10:00"), adj(1, "DEFECT", "2026-01-11T10:00")];
-    const r = computeAvailableStock({ qtyBox: 90, uploadedAt: T("2026-01-11T09:00") }, adjustments);
-    expect(r.deductions.DEFECT).toBe(5);
-    expect(r.available).toBe(85);
-  });
+  describe("사후 불량 반영 여부 (배치별)", () => {
+    const defect10 = [adj(10, "DEFECT", "2026-01-10T10:00")];
 
-  it("DEFECT_RESET_ON_UPLOAD=true면 불량도 업로드 이후만 차감", () => {
-    const adjustments = [adj(4, "DEFECT", "2026-01-10T10:00"), adj(1, "DEFECT", "2026-01-11T10:00")];
-    const r = computeAvailableStock({ qtyBox: 90, uploadedAt: T("2026-01-11T09:00") }, adjustments, {
-      defectResetOnUpload: true,
+    it("불량 10 입력 후 '반영됨' 90 업로드 → 90 (이전 불량 리셋)", () => {
+      const r = computeAvailableStock(
+        { qtyBox: 90, uploadedAt: T("2026-01-11T09:00"), defectResetAt: T("2026-01-11T09:00") },
+        defect10,
+      );
+      expect(r.available).toBe(90);
+      expect(r.deductions.DEFECT).toBe(0);
     });
-    expect(r.deductions.DEFECT).toBe(1);
-    expect(r.available).toBe(89);
+
+    it("불량 10 입력 후 '미반영' 100 업로드 → 90 (불량 유지)", () => {
+      const r = computeAvailableStock({ qtyBox: 100, uploadedAt: T("2026-01-11T09:00"), defectResetAt: null }, defect10);
+      expect(r.available).toBe(90);
+      expect(r.deductions.DEFECT).toBe(10);
+    });
+
+    it("'반영됨' 업로드 뒤에 입력한 불량은 다시 차감된다", () => {
+      const r = computeAvailableStock(
+        { qtyBox: 90, uploadedAt: T("2026-01-11T09:00"), defectResetAt: T("2026-01-11T09:00") },
+        [...defect10, adj(4, "DEFECT", "2026-01-11T15:00")],
+      );
+      expect(r.available).toBe(86);
+    });
+
+    it("리셋 시점은 가장 최근 '반영됨' 배치 — 이후 '미반영' 배치가 와도 유지된다", () => {
+      // 01-11 반영됨(리셋), 01-12 미반영 100 업로드. 01-10 불량은 계속 무시, 01-11 15:00 불량만 차감
+      const r = computeAvailableStock(
+        { qtyBox: 100, uploadedAt: T("2026-01-12T09:00"), defectResetAt: T("2026-01-11T09:00") },
+        [...defect10, adj(4, "DEFECT", "2026-01-11T15:00")],
+      );
+      expect(r.available).toBe(96);
+    });
   });
 
-  it("기초재고가 없으면 0에서 차감하고 hasBaseline=false", () => {
-    const r = computeAvailableStock(null, [adj(2, "SHIPMENT", "2026-01-10T10:00")]);
-    expect(r.hasBaseline).toBe(false);
-    expect(r.baseline).toBe(0);
-    expect(r.available).toBe(-2);
+  describe("확인 필요 vs 0박스", () => {
+    it("최근 재고 파일에 없는 품목은 available=null (음수 계산 금지)", () => {
+      const r = computeAvailableStock(null, [adj(2, "SHIPMENT", "2026-01-10T10:00")]);
+      expect(r.hasBaseline).toBe(false);
+      expect(r.available).toBeNull();
+      expect(r.baseline).toBeNull();
+      expect(r.deductions.SHIPMENT).toBe(2); // 내역은 그대로 보여준다
+    });
+
+    it("파일에 0으로 있는 품목은 available=0", () => {
+      const r = computeAvailableStock({ qtyBox: 0, uploadedAt: T("2026-01-10T09:00") }, []);
+      expect(r.hasBaseline).toBe(true);
+      expect(r.available).toBe(0);
+    });
+
+    it("집계 기준 시각은 그대로 전달된다", () => {
+      const r = computeAvailableStock(
+        { qtyBox: 5, uploadedAt: T("2026-01-10T09:12"), stockAsOf: T("2026-01-10T09:00") },
+        [],
+      );
+      expect(r.stockAsOf?.toISOString()).toBe(T("2026-01-10T09:00").toISOString());
+      expect(r.uploadedAt?.toISOString()).toBe(T("2026-01-10T09:12").toISOString());
+    });
   });
 
   it("오늘 차감 합계는 오늘 날짜의 미취소 변동만 센다", () => {

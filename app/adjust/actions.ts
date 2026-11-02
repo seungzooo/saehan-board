@@ -2,10 +2,12 @@
 
 import { type AdjustmentItem, toItem } from "@/lib/adjust";
 import type { AdjustmentReason, AvailableStock } from "@/lib/availableStock";
-import { canAdjust, getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { computeForProducts } from "@/lib/stock";
 import { revalidatePath } from "next/cache";
+
+/** 로그인 없음(F8 삭제). 입력자는 고정값으로 기록 */
+const ACTOR = "담당자";
 
 /** F2에서 입력 가능한 사유. 수주(ORDER)는 F7에서 따로 등록한다 */
 const INPUT_REASONS: AdjustmentReason[] = ["SHIPMENT", "DEFECT", "OTHER"];
@@ -38,9 +40,6 @@ export async function createAdjustmentAction(input: {
   reason: string;
   memo?: string;
 }): Promise<SaveResult> {
-  const user = await getCurrentUser();
-  if (!canAdjust(user)) return { ok: false, message: "변동 입력 권한이 없습니다." };
-
   const qty = Number(input.qtyBox);
   if (!Number.isInteger(qty) || qty <= 0) return { ok: false, message: "수량은 1 이상의 정수여야 합니다." };
   if (!(INPUT_REASONS as string[]).includes(input.reason)) return { ok: false, message: "사유가 잘못되었습니다." };
@@ -49,7 +48,7 @@ export async function createAdjustmentAction(input: {
 
   const memo = input.memo?.trim() || null;
   const row = await prisma.stockAdjustment.create({
-    data: { productCode: product.code, qtyBox: qty, reason: input.reason, memo, createdBy: user!.loginId },
+    data: { productCode: product.code, qtyBox: qty, reason: input.reason, memo, createdBy: ACTOR },
   });
   const stock = (await computeForProducts([product.code])).get(product.code)!;
   revalidatePath("/stock");
@@ -61,8 +60,6 @@ export async function createAdjustmentAction(input: {
 export type CancelResult = { ok: true; item: AdjustmentItem; stock: AvailableStock } | { ok: false; message: string };
 
 export async function cancelAdjustmentAction(id: number): Promise<CancelResult> {
-  const user = await getCurrentUser();
-  if (!canAdjust(user)) return { ok: false, message: "취소 권한이 없습니다." };
   const existing = await prisma.stockAdjustment.findUnique({ where: { id }, include: { product: { select: { name: true } } } });
   if (!existing) return { ok: false, message: "해당 변동이 없습니다." };
   if (existing.cancelledAt) return { ok: false, message: "이미 취소된 변동입니다." };

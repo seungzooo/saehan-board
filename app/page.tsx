@@ -1,5 +1,6 @@
 import type { UploadKind } from "@/config/excel-mapping";
 import { getDashboard, LOW_STOCK_THRESHOLD } from "@/lib/dashboard";
+import { basisText, StaleBadge } from "@/lib/stockDisplay";
 import { UPLOAD_KIND_LABEL } from "@/lib/excel/upload";
 import { formatDateTime } from "@/lib/format";
 import Link from "next/link";
@@ -17,7 +18,14 @@ export default async function Home() {
       </header>
 
       <div className="grid grid-cols-2 gap-3">
-        <Tile href="/upload" label="재고 기준 시각" value={d.batch ? formatDateTime(d.batch.uploadedAt) : "업로드 없음"} small={!!d.batch} tone={d.batch ? "normal" : "warn"} />
+        <Tile
+          href="/upload"
+          label="재고 기준"
+          value={d.batch ? basisText(d.batch) : "재고 파일 없음"}
+          small={!!d.batch}
+          tone={d.batch ? "normal" : "warn"}
+          badge={d.batch ? <StaleBadge uploadedAt={d.batch.uploadedAt} /> : null}
+        />
         <Tile href="/stock" label="등록 품목" value={d.productCount.toLocaleString()} unit="개" />
         <Tile href="/adjust" label="오늘 변동" value={d.todayAdjustments.toLocaleString()} unit="건" />
         <Tile
@@ -71,6 +79,7 @@ function Tile({
   unit,
   small,
   tone = "normal",
+  badge,
 }: {
   href: string;
   label: string;
@@ -78,6 +87,7 @@ function Tile({
   unit?: string;
   small?: boolean;
   tone?: "normal" | "warn";
+  badge?: React.ReactNode;
 }) {
   return (
     <Link href={href} className="flex flex-col rounded-lg border border-zinc-200 bg-white p-3 active:bg-zinc-50">
@@ -86,6 +96,7 @@ function Tile({
         {value}
         {unit && <span className="ml-1 text-xs font-normal text-zinc-500">{unit}</span>}
       </span>
+      {badge}
     </Link>
   );
 }

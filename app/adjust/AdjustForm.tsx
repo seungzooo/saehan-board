@@ -3,6 +3,7 @@
 import type { AdjustmentItem } from "@/lib/adjust";
 import { REASON_LABEL, type AvailableStock } from "@/lib/availableStock";
 import { formatShort } from "@/lib/format";
+import { availableText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { cancelAdjustmentAction, createAdjustmentAction, searchProductsAction, type ProductHit } from "./actions";
@@ -108,7 +109,7 @@ export default function AdjustForm({
         return;
       }
       setRecent((list) => list.map((x) => (x.id === r.item.id ? r.item : x)));
-      setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 가용재고 ${r.stock.available.toLocaleString()}`, stock: r.stock });
+      setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 가용재고 ${availableText(r.stock)}`, stock: r.stock });
     });
   }
 
@@ -221,7 +222,8 @@ export default function AdjustForm({
           <p className="font-medium">{flash.text}</p>
           {flash.stock && (
             <p className="mt-1">
-              가용재고 <span className="text-xl font-bold tabular-nums">{flash.stock.available.toLocaleString()}</span> 박스
+              가용재고 <span className="text-xl font-bold tabular-nums">{availableText(flash.stock)}</span>
+              {flash.stock.available !== null && " 박스"}
               {product && (
                 <>
                   {" · "}

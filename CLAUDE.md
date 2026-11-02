@@ -30,30 +30,34 @@
 
 - 단위: **박스**. 품목별 박스당 입수는 product 테이블에 둔다.
 - 새 엑셀이 업로드되면 그 시각이 새 기준점이 된다. 출고·수주 차감은 리셋된다 (ERP가 이미 반영했으므로).
-- 불량 차감은 **기본 가정: 리셋하지 않고 누적** (ERP에 사후 불량이 반영되지 않기 때문). 설정값 `DEFECT_RESET_ON_UPLOAD=false`로 두고 바꿀 수 있게 한다.
+- 불량 차감 리셋은 **배치별로 결정**한다. 재고 업로드 시 "이 파일에 사후 불량이 반영되어 있나요?"를 묻고, 예(`UploadBatch.defectApplied=true`)이면 그 배치의 반영 시각 이전 불량 차감을 무시한다. 아니오면 유지. (환경변수 `DEFECT_RESET_ON_UPLOAD`는 폐기)
+- 최근 재고 파일에 없는 품목은 가용재고를 **"확인 필요"**(null)로 표시하고 음수로 계산하지 않는다. 파일에 0으로 있는 품목은 "0박스". 둘을 구분한다.
+- 재고 배치에는 **집계 기준 시각 `stockAsOf`**(담당자 입력, ERP 조회 시각)와 **반영 시각 `uploadedAt`**이 따로 있다. 화면은 "집계 기준 11-03 09:00 · 반영 11-03 09:12"로 표시하고, 집계 시각이 없으면 "집계 시각 미확인", 반영 후 24시간(`config/stock.ts STALE_AFTER_HOURS`)이 지나면 "갱신 지연" 배지.
 
 ## 데이터 모델 (Prisma)
 
 | 테이블 | 컬럼 | 비고 |
 | --- | --- | --- |
 | `Product` | code (PK), name, capacity(예: "2L"), unitsPerBox, boxW, boxD, boxH (mm), volumeM3 (계산), isActive | 제품 마스터. 엑셀로 일괄 등록 |
-| `StockSnapshot` | id, productCode, qtyBox, uploadedAt, uploadedBy, batchId | 업로드 1회 = batchId 1개. 같은 날 재업로드 시 새 batch가 기준점, 이전 batch는 보관 |
+| `StockSnapshot` | id, productCode, qtyBox, uploadedAt, stockAsOf, uploadedBy, batchId | 업로드 1회 = batchId 1개. 같은 날 재업로드 시 새 batch가 기준점, 이전 batch는 보관 |
+| `UploadBatch` | id, kind, fileName, fileHash, rowCount, uploadedAt, uploadedBy, stockAsOf, defectApplied | 업로드 1회. fileHash로 같은 파일 재업로드 차단 |
 | `StockAdjustment` | id, productCode, qtyBox, reason (DEFECT / SHIPMENT / ORDER / OTHER), memo, createdBy, createdAt, cancelledAt | 취소는 삭제가 아니라 cancelledAt 기록 |
 | `ProductionHistory` | id, productCode, date, qtyGood, qtyDefect | ERP 생산실적 엑셀 |
 | `ShipmentHistory` | id, productCode, date, customerCode, qtyBox | ERP 출고실적 엑셀 |
 | `Customer` | code (PK), name, type (B2B / B2C), orderUnit (VEHICLE / BOX) | 거래처 마스터 |
 | `Vehicle` | id, tonnage, capacityM3, kind | 적재율 계산용 |
 | `ExternalIndex` | yearMonth, kosisShipmentIndex | KOSIS 플라스틱제품 제조업 출하지수, CSV 수동 업로드 |
-| `User` | id, loginId, passwordHash, name, role (SALES / STOCK / ADMIN) | |
 
 ## 기능 — 빌드 순서대로
 
-MVP = F1 → F2 → F3 → F8. 이 넷이 돌아가면 현재 임시 도구를 대체할 수 있다. 그 다음 F6 → F4 → F5 → F7.
+MVP = F1 → F2 → F3 (F8은 삭제). 이 셋이 돌아가면 현재 임시 도구를 대체할 수 있다. 그 다음 F6 → F4 → F5 → F7.
 
 ### F1. 엑셀 업로드 (role: STOCK, ADMIN)
 - ERP 재고 엑셀을 그대로 업로드. 컬럼 매핑은 `config/excel-mapping.ts`에 상수로 두고, 실제 엑셀 샘플을 받으면 거기만 수정한다.
 - 업로드 성공 시 전 품목 StockSnapshot 생성(batchId 공유), 업로드 시각 표시.
-- 컬럼이 안 맞으면 어느 컬럼이 문제인지 화면에 보여주고 저장하지 않는다.
+- 컬럼이 안 맞으면 어느 컬럼이 문제인지 화면에 보여주고 저장하지 않는다 (직전 기준 유지).
+- 행 단위 오류(수량이 숫자 아님 등)는 자동으로 건너뛰지 않는다. "N행 오류, 그대로 진행하면 해당 품목은 확인 필요가 됩니다"를 보여주고 확인받은 뒤에만 저장.
+- 재고 탭 추가 입력: 집계 기준 시각(기본값 지금), 사후 불량 반영 여부(예/아니오).
 - 생산실적·출고실적·제품 마스터·거래처도 같은 화면에서 탭으로 업로드.
 - **수용 기준:** 업로드 후 10초 내 반영. 같은 파일 두 번 올려도 중복 생성 안 됨(batchId로 대체).
 
@@ -68,9 +72,8 @@ MVP = F1 → F2 → F3 → F8. 이 넷이 돌아가면 현재 임시 도구를 �
 - 품목 탭하면 변동 이력 + (F5 구현 후) 예상 소진일수.
 - **수용 기준:** 검색 후 2초 내 표시. 수량이 담당자 수동 엑셀과 일치.
 
-### F8. 로그인·권한
-- SALES: F3, F4, F7. STOCK: F1, F2 + SALES 전체. ADMIN: 전체 + 사용자 관리.
-- 권한 없는 메뉴는 보이지 않는다.
+### F8. 로그인·권한 — **삭제됨 (2026-11-03)**
+- 모든 화면 누구나 접근. 입력자·업로더는 "담당자" 고정값으로 기록.
 
 ### F6. 불량률 추적 (role: STOCK, ADMIN)
 - StockAdjustment(reason=DEFECT)를 품목별·월별 집계.
@@ -150,7 +153,7 @@ MVP = F1 → F2 → F3 → F8. 이 넷이 돌아가면 현재 임시 도구를 �
 | 항목 | 가정 | 바뀌면 영향 |
 | --- | --- | --- |
 | 엑셀 업로드 주기 | 하루 1회 | 하루 2회면 차감 리셋 시점만 달라짐. 로직 변경 없음 |
-| 불량 차감 리셋 | 안 함 (누적) | `DEFECT_RESET_ON_UPLOAD` 설정으로 전환 |
+| 불량 차감 리셋 | 업로드 때 담당자가 배치별로 선택 (기본 아니오=유지) | — |
 | 재고 단위 | 박스 | 낱개 품목이 있으면 Product.unitsPerBox=1 |
 | 재고 엑셀 컬럼 | 품번 / 품명/규격 / 재고수량 (판매실적과 같은 품번 체계) | 재고 엑셀 샘플 받으면 mapping 수정 |
 | B2B/B2C | 5년 출고 100건 초과 = B2B | 이사님 분류표 받으면 교체 |

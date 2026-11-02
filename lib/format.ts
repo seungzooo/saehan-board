@@ -42,3 +42,8 @@ export function formatShort(d: Date | string): string {
 export function isSameSeoulDay(a: Date, b: Date): boolean {
   return formatDate(a) === formatDate(b);
 }
+
+/** 마지막 반영 후 STALE_AFTER_HOURS 경과 여부 */
+export function isStale(uploadedAt: Date, staleAfterHours: number, now = new Date()): boolean {
+  return now.getTime() - uploadedAt.getTime() > staleAfterHours * 3600 * 1000;
+}

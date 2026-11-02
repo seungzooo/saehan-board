@@ -1,9 +1,10 @@
 /** 홈 대시보드 지표. 전부 조회 시점 계산 — 저장하지 않는다 */
+import { LOW_STOCK_THRESHOLD } from "@/config/stock";
 import { prisma } from "@/lib/db";
 import { seoulParts } from "@/lib/format";
 import { computeForProducts, getLatestStockBatch } from "@/lib/stock";
 
-export const LOW_STOCK_THRESHOLD = 10;
+export { LOW_STOCK_THRESHOLD };
 
 /** 오늘(Asia/Seoul) 00:00 의 UTC 시각 */
 export function seoulDayStart(now = new Date()): Date {
@@ -30,6 +31,6 @@ async function countLowStock(batchId: string | null): Promise<number> {
   );
   const stocks = await computeForProducts(codes);
   let n = 0;
-  for (const s of stocks.values()) if (s.available <= LOW_STOCK_THRESHOLD) n++;
+  for (const s of stocks.values()) if (s.available !== null && s.available <= LOW_STOCK_THRESHOLD) n++;
   return n;
 }

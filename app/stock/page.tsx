@@ -1,6 +1,6 @@
-import { formatDateTime } from "@/lib/format";
-import { LOW_STOCK_THRESHOLD } from "@/lib/dashboard";
-import { getLatestStockBatch, listLowStock, searchStock } from "@/lib/stock";
+import { LOW_STOCK_THRESHOLD } from "@/config/stock";
+import { getStockBasis, listLowStock, searchStock } from "@/lib/stock";
+import { availableText, availableTone, BasisLine } from "@/lib/stockDisplay";
 import Link from "next/link";
 import SearchBox from "./SearchBox";
 
@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 export default async function StockPage({ searchParams }: { searchParams: Promise<{ q?: string; low?: string }> }) {
   const { q = "", low } = await searchParams;
   const lowMode = low === "1" && q.trim() === "";
-  const [batch, result] = await Promise.all([
-    getLatestStockBatch(),
+  const [basis, result] = await Promise.all([
+    getStockBasis(),
     lowMode ? listLowStock(LOW_STOCK_THRESHOLD).then((rows) => ({ rows, truncated: false })) : searchStock(q),
   ]);
 
@@ -18,14 +18,7 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-bold">가용재고 조회</h1>
-        <p className="text-xs text-zinc-500">
-          재고 기준:{" "}
-          {batch ? (
-            <span className="font-medium text-zinc-700">{formatDateTime(batch.uploadedAt)} 업로드</span>
-          ) : (
-            <span className="text-red-600">아직 재고 업로드 없음</span>
-          )}
-        </p>
+        <BasisLine basis={basis} />
       </header>
 
       <SearchBox initialQuery={q} />
@@ -55,7 +48,7 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
           <ul className="flex flex-col gap-2">
             {result.rows.map((r) => {
               const s = r.stock;
-              const tone = !s.hasBaseline ? "text-zinc-400" : s.available <= 0 ? "text-red-600" : "text-zinc-900";
+              const needsCheck = s.available === null;
               return (
                 <li key={r.code}>
                   <Link
@@ -64,20 +57,20 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{r.name}</p>
-                      <p className="mt-0.5 text-xs text-zinc-500">
+                      <p className="mt-0.5 truncate text-xs text-zinc-500">
                         <span className="font-mono">{r.code}</span>
                         {r.capacity && ` · ${r.capacity}`} · {r.packUnit} {r.unitsPerBox.toLocaleString()}개
                       </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        기초 {s.hasBaseline ? s.baseline.toLocaleString() : "—"} · 오늘 차감{" "}
+                      <p className="mt-1 truncate text-xs text-zinc-500">
+                        {needsCheck ? "최근 재고 파일에 없음" : `기초 ${s.baseline!.toLocaleString()}`} · 오늘 차감{" "}
                         {s.todayDeduction.toLocaleString()}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className={`text-3xl font-bold tabular-nums ${tone}`}>
-                        {s.hasBaseline || s.available !== 0 ? s.available.toLocaleString() : "—"}
+                      <p className={`font-bold tabular-nums ${needsCheck ? "text-lg" : "text-3xl"} ${availableTone(s)}`}>
+                        {availableText(s)}
                       </p>
-                      <p className="text-xs text-zinc-500">박스</p>
+                      <p className="text-xs text-zinc-500">{needsCheck ? "" : "박스"}</p>
                     </div>
                   </Link>
                 </li>

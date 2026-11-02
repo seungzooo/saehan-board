@@ -1,6 +1,7 @@
 import { ADJUSTMENT_REASONS, REASON_LABEL } from "@/lib/availableStock";
 import { formatDateTime } from "@/lib/format";
-import { getProductDetail } from "@/lib/stock";
+import { getProductDetail, getStockBasis } from "@/lib/stock";
+import { availableText, availableTone, BasisLine } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -14,10 +15,13 @@ export default async function ProductDetailPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const [{ code }, { q }] = await Promise.all([params, searchParams]);
-  const detail = await getProductDetail(decodeURIComponent(code));
+  const [detail, basis] = await Promise.all([getProductDetail(decodeURIComponent(code)), getStockBasis()]);
   if (!detail) notFound();
   const { product, stock, history } = detail;
-  const tone = !stock.hasBaseline ? "text-zinc-400" : stock.available <= 0 ? "text-red-600" : "text-zinc-900";
+  const needsCheck = stock.available === null;
+  // 품목이 파일에 없어도(확인 필요) 최근 재고 파일의 집계·반영 시각은 보여준다
+  const asOf = stock.stockAsOf ?? basis?.stockAsOf ?? null;
+  const uploadedAt = stock.uploadedAt ?? basis?.uploadedAt ?? null;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
@@ -25,35 +29,40 @@ export default async function ProductDetailPage({
         ← 검색으로
       </Link>
 
-      <header>
-        <h1 className="text-xl font-bold">{product.name}</h1>
-        <p className="mt-1 text-sm text-zinc-500">
+      <header className="min-w-0">
+        <h1 className="break-words text-xl font-bold">{product.name}</h1>
+        <p className="mt-1 break-words text-sm text-zinc-500">
           <span className="font-mono">{product.code}</span>
           {product.capacity && ` · ${product.capacity}`} · {product.packUnit} {product.unitsPerBox.toLocaleString()}개
           {product.category && ` · ${product.category}`}
         </p>
       </header>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
+      <section data-testid="stock-summary" className="rounded-lg border border-zinc-200 bg-white p-4">
         <p className="text-sm text-zinc-500">가용재고</p>
-        <p className={`text-5xl font-bold tabular-nums ${tone}`}>
-          {stock.hasBaseline || stock.available !== 0 ? stock.available.toLocaleString() : "—"}
-          <span className="ml-1 text-base font-normal text-zinc-500">박스</span>
+        <p data-testid="available" className={`font-bold tabular-nums ${needsCheck ? "text-3xl" : "text-5xl"} ${availableTone(stock)}`}>
+          {availableText(stock)}
+          {!needsCheck && <span className="ml-1 text-base font-normal text-zinc-500">박스</span>}
         </p>
+        <BasisLine basis={basis} className="mt-1" />
+        {needsCheck && (
+          <p className="mt-2 text-sm text-amber-700">
+            최근 재고 파일에 이 품목이 없습니다. 재고 담당자가 다음 파일에 포함시키면 수량이 표시됩니다.
+          </p>
+        )}
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
           <dt className="text-zinc-500">기초재고</dt>
-          <dd className="text-right tabular-nums">{stock.hasBaseline ? stock.baseline.toLocaleString() : "업로드 없음"}</dd>
+          <dd className="text-right tabular-nums">{needsCheck ? "—" : stock.baseline!.toLocaleString()}</dd>
           {ADJUSTMENT_REASONS.map((r) => (
             <Row key={r} label={`${REASON_LABEL[r]} 차감`} value={stock.deductions[r]} />
           ))}
           <dt className="text-zinc-500">오늘 차감</dt>
           <dd className="text-right tabular-nums">{stock.todayDeduction.toLocaleString()}</dd>
-          <dt className="text-zinc-500">재고 기준</dt>
-          <dd className="text-right">{stock.uploadedAt ? formatDateTime(stock.uploadedAt) : "—"}</dd>
+          <dt className="text-zinc-500">집계 기준</dt>
+          <dd className="text-right">{asOf ? formatDateTime(asOf) : "미확인"}</dd>
+          <dt className="text-zinc-500">반영 시각</dt>
+          <dd className="text-right">{uploadedAt ? formatDateTime(uploadedAt) : "—"}</dd>
         </dl>
-        {!stock.hasBaseline && (
-          <p className="mt-3 text-xs text-amber-700">최근 재고 업로드에 이 품목이 없습니다. 기초재고 0으로 계산했습니다.</p>
-        )}
       </section>
 
       <section>
@@ -104,4 +113,3 @@ function Row({ label, value }: { label: string; value: number }) {
     </>
   );
 }
-
