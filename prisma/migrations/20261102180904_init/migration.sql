@@ -1,0 +1,180 @@
+-- CreateTable
+CREATE TABLE "Product" (
+    "code" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "itemType" TEXT,
+    "capacity" TEXT,
+    "packUnit" TEXT NOT NULL DEFAULT '박스',
+    "unitsPerBox" INTEGER NOT NULL DEFAULT 1,
+    "category" TEXT,
+    "isProduced" BOOLEAN NOT NULL DEFAULT false,
+    "boxW" INTEGER,
+    "boxD" INTEGER,
+    "boxH" INTEGER,
+    "volumeM3" REAL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "UploadBatch" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "kind" TEXT NOT NULL,
+    "fileName" TEXT NOT NULL,
+    "fileHash" TEXT NOT NULL,
+    "rowCount" INTEGER NOT NULL,
+    "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "uploadedBy" TEXT NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "StockSnapshot" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "productCode" TEXT NOT NULL,
+    "qtyBox" INTEGER NOT NULL,
+    "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "uploadedBy" TEXT NOT NULL,
+    "batchId" TEXT NOT NULL,
+    CONSTRAINT "StockSnapshot_productCode_fkey" FOREIGN KEY ("productCode") REFERENCES "Product" ("code") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "StockSnapshot_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "UploadBatch" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "StockAdjustment" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "productCode" TEXT NOT NULL,
+    "qtyBox" INTEGER NOT NULL,
+    "reason" TEXT NOT NULL,
+    "memo" TEXT,
+    "createdBy" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "cancelledAt" DATETIME,
+    CONSTRAINT "StockAdjustment_productCode_fkey" FOREIGN KEY ("productCode") REFERENCES "Product" ("code") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "ProductionHistory" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "productCode" TEXT NOT NULL,
+    "date" DATETIME NOT NULL,
+    "yearMonth" TEXT NOT NULL,
+    "dept" TEXT,
+    "shift" TEXT,
+    "machine" TEXT,
+    "slipType" TEXT NOT NULL,
+    "unitsPerBox" INTEGER,
+    "qtyGood" INTEGER NOT NULL,
+    "qtyDefect" INTEGER NOT NULL,
+    "batchId" TEXT,
+    CONSTRAINT "ProductionHistory_productCode_fkey" FOREIGN KEY ("productCode") REFERENCES "Product" ("code") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ProductionHistory_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "UploadBatch" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "ShipmentHistory" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "productCode" TEXT NOT NULL,
+    "date" DATETIME NOT NULL,
+    "yearMonth" TEXT NOT NULL,
+    "customerCode" TEXT NOT NULL,
+    "slipNo" TEXT,
+    "shipType" TEXT NOT NULL,
+    "salesType" TEXT NOT NULL,
+    "qtyUnits" INTEGER NOT NULL,
+    "qtyBox" REAL NOT NULL,
+    "batchId" TEXT,
+    CONSTRAINT "ShipmentHistory_productCode_fkey" FOREIGN KEY ("productCode") REFERENCES "Product" ("code") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ShipmentHistory_customerCode_fkey" FOREIGN KEY ("customerCode") REFERENCES "Customer" ("code") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ShipmentHistory_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "UploadBatch" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "Customer" (
+    "code" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "type" TEXT NOT NULL DEFAULT 'B2C',
+    "typeSource" TEXT NOT NULL DEFAULT 'AUTO',
+    "orderUnit" TEXT NOT NULL DEFAULT 'BOX',
+    "isActive" BOOLEAN NOT NULL DEFAULT true
+);
+
+-- CreateTable
+CREATE TABLE "Vehicle" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "tonnage" REAL NOT NULL,
+    "capacityM3" REAL NOT NULL,
+    "kind" TEXT NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "ExternalIndex" (
+    "yearMonth" TEXT NOT NULL PRIMARY KEY,
+    "kosisShipmentIndex" REAL NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "User" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "loginId" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "role" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- CreateTable
+CREATE TABLE "MonthlyStat" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "productCode" TEXT NOT NULL,
+    "yearMonth" TEXT NOT NULL,
+    "qtyProduced" INTEGER NOT NULL DEFAULT 0,
+    "qtyProdDefect" INTEGER NOT NULL DEFAULT 0,
+    "qtyShippedBox" REAL NOT NULL DEFAULT 0,
+    "qtyShippedB2B" REAL NOT NULL DEFAULT 0,
+    "qtyShippedB2C" REAL NOT NULL DEFAULT 0,
+    CONSTRAINT "MonthlyStat_productCode_fkey" FOREIGN KEY ("productCode") REFERENCES "Product" ("code") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UploadBatch_fileHash_key" ON "UploadBatch"("fileHash");
+
+-- CreateIndex
+CREATE INDEX "StockSnapshot_productCode_uploadedAt_idx" ON "StockSnapshot"("productCode", "uploadedAt");
+
+-- CreateIndex
+CREATE INDEX "StockSnapshot_batchId_idx" ON "StockSnapshot"("batchId");
+
+-- CreateIndex
+CREATE INDEX "StockAdjustment_productCode_createdAt_idx" ON "StockAdjustment"("productCode", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "ProductionHistory_productCode_date_idx" ON "ProductionHistory"("productCode", "date");
+
+-- CreateIndex
+CREATE INDEX "ProductionHistory_date_idx" ON "ProductionHistory"("date");
+
+-- CreateIndex
+CREATE INDEX "ProductionHistory_yearMonth_idx" ON "ProductionHistory"("yearMonth");
+
+-- CreateIndex
+CREATE INDEX "ShipmentHistory_productCode_date_idx" ON "ShipmentHistory"("productCode", "date");
+
+-- CreateIndex
+CREATE INDEX "ShipmentHistory_customerCode_date_idx" ON "ShipmentHistory"("customerCode", "date");
+
+-- CreateIndex
+CREATE INDEX "ShipmentHistory_date_idx" ON "ShipmentHistory"("date");
+
+-- CreateIndex
+CREATE INDEX "ShipmentHistory_yearMonth_idx" ON "ShipmentHistory"("yearMonth");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "User_loginId_key" ON "User"("loginId");
+
+-- CreateIndex
+CREATE INDEX "MonthlyStat_yearMonth_idx" ON "MonthlyStat"("yearMonth");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "MonthlyStat_productCode_yearMonth_key" ON "MonthlyStat"("productCode", "yearMonth");

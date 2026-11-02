@@ -1,0 +1,412 @@
+/**
+ * 매핑된 행 → DB 저장. seed(CSV 정리본)와 F1 업로드가 같은 함수를 쓴다.
+ *
+ * 저장 규칙
+ * - STOCK: batch 1개 + 전 품목 StockSnapshot. 같은 품번이 여러 행이면 합산(창고별 행 가정).
+ * - SALES / PRODUCTION: 파일이 덮는 기간(최소~최대 일자)의 기존 행을 지우고 다시 넣는다.
+ *   (ERP에서 같은 기간을 다시 내려받아 올리면 교체되는 의미). PRODUCTION은 부서별 파일이라
+ *   같은 기간 + 같은 부서만 지운다.
+ * - PRODUCT / CUSTOMER: upsert.
+ */
+import {
+  B2B_MIN_SHIPMENT_COUNT,
+  CATEGORY_BY_PREFIX,
+  CUSTOMER_MAPPING,
+  PRODUCTION_MAPPING,
+  PRODUCT_MAPPING,
+  SALES_MAPPING,
+  STOCK_MAPPING,
+} from "@/config/excel-mapping";
+import type { PrismaClient } from "@/lib/generated/prisma/client";
+import { applyMapping, productPrefix, slipTypeCode, toIsoDate, toNumber } from "./mapping";
+
+type Db = PrismaClient;
+const CHUNK = 500;
+
+export type RowError = { row: number; message: string };
+export type ImportResult = {
+  ok: true;
+  inserted: number;
+  skipped: number;
+  errors: RowError[]; // 앞 50건만 보관
+  newProducts: number;
+  newCustomers: number;
+  period?: { from: string; to: string };
+  note?: string;
+};
+export type ImportFailure = { ok: false; missing: string[]; headerFound: string[] };
+export type ImportOutcome = ImportResult | ImportFailure;
+
+type ProductSeed = { name: string; itemType?: string; capacity?: string; packUnit?: string; unitsPerBox?: number };
+
+function pushErr(errs: RowError[], row: number, message: string) {
+  if (errs.length < 50) errs.push({ row, message });
+}
+
+async function chunked<T>(items: T[], fn: (chunk: T[]) => Promise<unknown>) {
+  for (let i = 0; i < items.length; i += CHUNK) await fn(items.slice(i, i + CHUNK));
+}
+
+function categoryOf(code: string): string | null {
+  return CATEGORY_BY_PREFIX[productPrefix(code)] ?? null;
+}
+
+function isoOf(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function dateFromIso(iso: string): Date {
+  // 로컬 시간대와 무관하게 UTC 자정으로 고정 — 조회/비교 시 일관성 유지
+  return new Date(iso + "T00:00:00.000Z");
+}
+
+/** 존재하지 않는 품번을 Product에 생성. 이미 있으면 갱신하지 않는다 */
+async function ensureProducts(db: Db, items: Map<string, ProductSeed>): Promise<number> {
+  const codes = [...items.keys()];
+  const existing = new Set<string>();
+  await chunked(codes, async (c) => {
+    const found = await db.product.findMany({ where: { code: { in: c } }, select: { code: true } });
+    found.forEach((p) => existing.add(p.code));
+  });
+  const toCreate = codes
+    .filter((c) => !existing.has(c))
+    .map((code) => {
+      const it = items.get(code)!;
+      return {
+        code,
+        name: it.name || code,
+        itemType: it.itemType || null,
+        capacity: it.capacity || null,
+        packUnit: it.packUnit || "박스",
+        unitsPerBox: it.unitsPerBox && it.unitsPerBox > 0 ? Math.round(it.unitsPerBox) : 1,
+        category: categoryOf(code),
+      };
+    });
+  await chunked(toCreate, (c) => db.product.createMany({ data: c }));
+  return toCreate.length;
+}
+
+async function ensureCustomers(db: Db, names: Set<string>): Promise<number> {
+  const codes = [...names];
+  const existing = new Set<string>();
+  await chunked(codes, async (c) => {
+    const found = await db.customer.findMany({ where: { code: { in: c } }, select: { code: true } });
+    found.forEach((p) => existing.add(p.code));
+  });
+  const toCreate = codes.filter((c) => !existing.has(c)).map((code) => ({ code, name: code }));
+  await chunked(toCreate, (c) => db.customer.createMany({ data: c }));
+  return toCreate.length;
+}
+
+// ───────────────────────── STOCK ─────────────────────────
+
+export async function importStock(
+  db: Db,
+  sheet: string[][],
+  ctx: { batchId: string; uploadedBy: string; uploadedAt: Date },
+): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, STOCK_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  const qty = new Map<string, number>();
+  const names = new Map<string, ProductSeed>();
+  let skipped = 0;
+  for (const r of mapped.rows) {
+    const code = r.productCode;
+    if (!code) {
+      skipped++;
+      continue;
+    }
+    const n = toNumber(r.qtyBox);
+    if (Number.isNaN(n)) {
+      pushErr(errors, r.__row, `재고수량이 숫자가 아님: "${r.qtyBox}"`);
+      skipped++;
+      continue;
+    }
+    qty.set(code, (qty.get(code) ?? 0) + n);
+    if (!names.has(code)) names.set(code, { name: r.productName });
+  }
+  const newProducts = await ensureProducts(db, names);
+  const data = [...qty.entries()].map(([productCode, q]) => ({
+    productCode,
+    qtyBox: Math.round(q),
+    uploadedAt: ctx.uploadedAt,
+    uploadedBy: ctx.uploadedBy,
+    batchId: ctx.batchId,
+  }));
+  await chunked(data, (c) => db.stockSnapshot.createMany({ data: c }));
+  return {
+    ok: true,
+    inserted: data.length,
+    skipped,
+    errors,
+    newProducts,
+    newCustomers: 0,
+    note: mapped.rows.length - skipped !== data.length ? "같은 품번 행은 합산했습니다." : undefined,
+  };
+}
+
+// ───────────────────────── SALES ─────────────────────────
+
+export async function importSales(db: Db, sheet: string[][], ctx: { batchId?: string }): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, SALES_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  let skipped = 0;
+  const products = new Map<string, ProductSeed>();
+  const customers = new Set<string>();
+  const rows: Array<{
+    productCode: string;
+    date: Date;
+    yearMonth: string;
+    customerCode: string;
+    slipNo: string | null;
+    shipType: string;
+    salesType: string;
+    qtyUnits: number;
+    qtyBox: number;
+    batchId: string | null;
+  }> = [];
+  for (const r of mapped.rows) {
+    if (!r.productCode) {
+      skipped++;
+      continue;
+    }
+    const iso = toIsoDate(r.date);
+    if (!iso) {
+      pushErr(errors, r.__row, `출고일자 형식 오류: "${r.date}"`);
+      skipped++;
+      continue;
+    }
+    const units = toNumber(r.qtyUnits);
+    const upb = toNumber(r.unitsPerBox);
+    if (Number.isNaN(units) || Number.isNaN(upb)) {
+      pushErr(errors, r.__row, `수량이 숫자가 아님: 출고수량 "${r.qtyUnits}", 포장단위수량 "${r.unitsPerBox}"`);
+      skipped++;
+      continue;
+    }
+    const customer = r.customerName || "(미상)";
+    customers.add(customer);
+    // 파일 순서상 뒤(최신) 행의 품명/포장 정보를 사용
+    products.set(r.productCode, {
+      name: r.productName,
+      itemType: r.itemType,
+      capacity: r.capacity,
+      packUnit: r.packUnit,
+      unitsPerBox: upb,
+    });
+    rows.push({
+      productCode: r.productCode,
+      date: dateFromIso(iso),
+      yearMonth: iso.slice(0, 7),
+      customerCode: customer,
+      slipNo: r.slipNo || null,
+      shipType: r.shipType || "정상",
+      salesType: r.salesType || "내수",
+      qtyUnits: Math.round(units),
+      qtyBox: upb > 0 ? units / upb : units,
+      batchId: ctx.batchId ?? null,
+    });
+  }
+  if (rows.length === 0) return { ok: true, inserted: 0, skipped, errors, newProducts: 0, newCustomers: 0 };
+
+  const newProducts = await ensureProducts(db, products);
+  const newCustomers = await ensureCustomers(db, customers);
+  const dates = rows.map((r) => r.date.getTime());
+  const from = new Date(Math.min(...dates));
+  const to = new Date(Math.max(...dates));
+  await db.shipmentHistory.deleteMany({ where: { date: { gte: from, lte: to } } });
+  await chunked(rows, (c) => db.shipmentHistory.createMany({ data: c }));
+  await refreshCustomerTypes(db);
+  return {
+    ok: true,
+    inserted: rows.length,
+    skipped,
+    errors,
+    newProducts,
+    newCustomers,
+    period: { from: isoOf(from), to: isoOf(to) },
+    note: "해당 기간의 기존 출고실적은 교체되었습니다.",
+  };
+}
+
+/** 분류표를 받기 전 기본값: 5년 출고 건수 100건 초과 = B2B. MANUAL 분류는 건드리지 않는다 */
+export async function refreshCustomerTypes(db: Db) {
+  const counts = await db.shipmentHistory.groupBy({ by: ["customerCode"], _count: { _all: true } });
+  const auto = await db.customer.findMany({ where: { typeSource: "AUTO" }, select: { code: true, type: true } });
+  const countMap = new Map(counts.map((c) => [c.customerCode, c._count._all]));
+  for (const c of auto) {
+    const type = (countMap.get(c.code) ?? 0) > B2B_MIN_SHIPMENT_COUNT ? "B2B" : "B2C";
+    if (type !== c.type) await db.customer.update({ where: { code: c.code }, data: { type } });
+  }
+}
+
+// ───────────────────────── PRODUCTION ─────────────────────────
+
+export async function importProduction(db: Db, sheet: string[][], ctx: { batchId?: string }): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, PRODUCTION_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  let skipped = 0;
+  const products = new Map<string, ProductSeed>();
+  const depts = new Set<string>();
+  const rows: Array<{
+    productCode: string;
+    date: Date;
+    yearMonth: string;
+    dept: string | null;
+    shift: string | null;
+    machine: string | null;
+    slipType: string;
+    unitsPerBox: number | null;
+    qtyGood: number;
+    qtyDefect: number;
+    batchId: string | null;
+  }> = [];
+  for (const r of mapped.rows) {
+    if (!r.productCode) {
+      skipped++;
+      continue;
+    }
+    const iso = toIsoDate(r.date);
+    if (!iso) {
+      pushErr(errors, r.__row, `생산일자 형식 오류: "${r.date}"`);
+      skipped++;
+      continue;
+    }
+    const good = toNumber(r.qtyGood);
+    const defect = toNumber(r.qtyDefect);
+    if (Number.isNaN(good) || Number.isNaN(defect)) {
+      pushErr(errors, r.__row, `수량이 숫자가 아님: A급 "${r.qtyGood}", C급 "${r.qtyDefect}"`);
+      skipped++;
+      continue;
+    }
+    const upb = toNumber(r.unitsPerBox);
+    if (!products.has(r.productCode))
+      products.set(r.productCode, { name: r.productName, itemType: r.itemType, packUnit: r.packUnit, unitsPerBox: upb });
+    const dept = r.dept || null;
+    if (dept) depts.add(dept);
+    rows.push({
+      productCode: r.productCode,
+      date: dateFromIso(iso),
+      yearMonth: iso.slice(0, 7),
+      dept,
+      shift: r.shift ? r.shift.slice(0, 1) : null, // "A A조" → "A"
+      machine: r.machine || null,
+      slipType: slipTypeCode(r.slipType),
+      unitsPerBox: Number.isNaN(upb) || upb <= 0 ? null : Math.round(upb),
+      qtyGood: Math.round(good),
+      qtyDefect: Math.round(defect),
+      batchId: ctx.batchId ?? null,
+    });
+  }
+  if (rows.length === 0) return { ok: true, inserted: 0, skipped, errors, newProducts: 0, newCustomers: 0 };
+
+  const newProducts = await ensureProducts(db, products);
+  const dates = rows.map((r) => r.date.getTime());
+  const from = new Date(Math.min(...dates));
+  const to = new Date(Math.max(...dates));
+  await db.productionHistory.deleteMany({
+    where: { date: { gte: from, lte: to }, ...(depts.size > 0 ? { dept: { in: [...depts] } } : {}) },
+  });
+  await chunked(rows, (c) => db.productionHistory.createMany({ data: c }));
+  await chunked([...products.keys()], (c) =>
+    db.product.updateMany({ where: { code: { in: c }, isProduced: false }, data: { isProduced: true } }),
+  );
+  return {
+    ok: true,
+    inserted: rows.length,
+    skipped,
+    errors,
+    newProducts,
+    newCustomers: 0,
+    period: { from: isoOf(from), to: isoOf(to) },
+    note: `해당 기간·부서(${[...depts].join(", ") || "전체"})의 기존 생산실적은 교체되었습니다.`,
+  };
+}
+
+// ───────────────────────── PRODUCT ─────────────────────────
+
+export async function importProducts(db: Db, sheet: string[][]): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, PRODUCT_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  let inserted = 0;
+  let skipped = 0;
+  for (const r of mapped.rows) {
+    if (!r.code) {
+      skipped++;
+      continue;
+    }
+    const nums = {
+      unitsPerBox: toNumber(r.unitsPerBox),
+      boxW: toNumber(r.boxW),
+      boxD: toNumber(r.boxD),
+      boxH: toNumber(r.boxH),
+    };
+    if (Object.values(nums).some(Number.isNaN)) {
+      pushErr(errors, r.__row, "입수/규격이 숫자가 아님");
+      skipped++;
+      continue;
+    }
+    const hasBox = nums.boxW > 0 && nums.boxD > 0 && nums.boxH > 0;
+    const dims = hasBox
+      ? { boxW: nums.boxW, boxD: nums.boxD, boxH: nums.boxH, volumeM3: (nums.boxW * nums.boxD * nums.boxH) / 1e9 }
+      : {};
+    const unitsPerBox = nums.unitsPerBox > 0 ? Math.round(nums.unitsPerBox) : undefined;
+    await db.product.upsert({
+      where: { code: r.code },
+      update: { name: r.name, capacity: r.capacity || undefined, packUnit: r.packUnit || undefined, unitsPerBox, ...dims },
+      create: {
+        code: r.code,
+        name: r.name,
+        capacity: r.capacity || null,
+        packUnit: r.packUnit || "박스",
+        unitsPerBox: unitsPerBox ?? 1,
+        category: categoryOf(r.code),
+        ...dims,
+      },
+    });
+    inserted++;
+  }
+  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: 0 };
+}
+
+// ───────────────────────── CUSTOMER ─────────────────────────
+
+export async function importCustomers(db: Db, sheet: string[][]): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, CUSTOMER_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  let inserted = 0;
+  let skipped = 0;
+  for (const r of mapped.rows) {
+    const code = r.code || r.name;
+    if (!code) {
+      skipped++;
+      continue;
+    }
+    const t = r.type.toUpperCase().replace(/\s/g, "");
+    const type = t.includes("B2B") ? "B2B" : t.includes("B2C") ? "B2C" : null;
+    const u = r.orderUnit.toUpperCase();
+    const orderUnit =
+      u.includes("차량") || u.includes("VEHICLE") ? "VEHICLE" : u.includes("박스") || u.includes("BOX") ? "BOX" : null;
+    await db.customer.upsert({
+      where: { code },
+      update: {
+        name: r.name || code,
+        ...(type ? { type, typeSource: "MANUAL" } : {}),
+        ...(orderUnit ? { orderUnit } : {}),
+      },
+      create: {
+        code,
+        name: r.name || code,
+        type: type ?? "B2C",
+        typeSource: type ? "MANUAL" : "AUTO",
+        orderUnit: orderUnit ?? "BOX",
+      },
+    });
+    inserted++;
+  }
+  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: 0 };
+}
