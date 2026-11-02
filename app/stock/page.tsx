@@ -1,13 +1,18 @@
 import { formatDateTime } from "@/lib/format";
-import { getLatestStockBatch, searchStock } from "@/lib/stock";
+import { LOW_STOCK_THRESHOLD } from "@/lib/dashboard";
+import { getLatestStockBatch, listLowStock, searchStock } from "@/lib/stock";
 import Link from "next/link";
 import SearchBox from "./SearchBox";
 
 export const dynamic = "force-dynamic";
 
-export default async function StockPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q = "" } = await searchParams;
-  const [batch, result] = await Promise.all([getLatestStockBatch(), searchStock(q)]);
+export default async function StockPage({ searchParams }: { searchParams: Promise<{ q?: string; low?: string }> }) {
+  const { q = "", low } = await searchParams;
+  const lowMode = low === "1" && q.trim() === "";
+  const [batch, result] = await Promise.all([
+    getLatestStockBatch(),
+    lowMode ? listLowStock(LOW_STOCK_THRESHOLD).then((rows) => ({ rows, truncated: false })) : searchStock(q),
+  ]);
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
@@ -25,7 +30,13 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
 
       <SearchBox initialQuery={q} />
 
-      {q.trim() === "" ? (
+      {lowMode && (
+        <p className="text-sm font-semibold text-red-700">
+          재고 {LOW_STOCK_THRESHOLD}박스 이하 품목 {result.rows.length}개
+          {result.rows.length === 0 && " — 없음"}
+        </p>
+      )}
+      {!lowMode && q.trim() === "" ? (
         <p className="py-8 text-center text-sm text-zinc-500">
           품목명이나 품번을 입력하세요.
           <br />
@@ -33,12 +44,14 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
           <span className="font-mono">TM00329</span>
         </p>
       ) : result.rows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-500">&ldquo;{q}&rdquo;에 해당하는 품목이 없습니다.</p>
+        !lowMode && <p className="py-8 text-center text-sm text-zinc-500">&ldquo;{q}&rdquo;에 해당하는 품목이 없습니다.</p>
       ) : (
         <>
-          <p className="text-xs text-zinc-500">
-            {result.rows.length}개 품목{result.truncated && " (상위 50개만 표시 — 검색어를 더 구체적으로)"}
-          </p>
+          {!lowMode && (
+            <p className="text-xs text-zinc-500">
+              {result.rows.length}개 품목{result.truncated && " (상위 50개만 표시 — 검색어를 더 구체적으로)"}
+            </p>
+          )}
           <ul className="flex flex-col gap-2">
             {result.rows.map((r) => {
               const s = r.stock;

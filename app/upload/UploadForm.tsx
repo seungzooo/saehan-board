@@ -3,6 +3,8 @@
 import type { UploadKind } from "@/config/excel-mapping";
 import type { UploadResponse } from "@/lib/excel/upload";
 import { formatDateTime } from "@/lib/format";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { uploadAction } from "./actions";
 
@@ -21,6 +23,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
   const tab = TABS.find((t) => t.kind === kind)!;
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -36,6 +39,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
       if (res.status === "saved") {
         setFile(null);
         if (inputRef.current) inputRef.current.value = "";
+        router.refresh(); // 서버 렌더된 "최근 업로드" 목록·기준 시각 갱신
       }
     });
   }
@@ -80,36 +84,69 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
         </button>
       </form>
 
-      {result && <ResultCard r={result} />}
+      {result && <ResultCard r={result} kind={kind} />}
     </div>
   );
 }
 
-function ResultCard({ r }: { r: UploadResponse }) {
+/** 업로드 종류별 한 줄 요약 — "재고 60개 품목 갱신, 기준 시각 04:35" */
+function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved" }>): string {
+  const x = r.result;
+  const n = (v: number) => v.toLocaleString();
+  const time = formatDateTime(r.uploadedAt).slice(11);
+  switch (kind) {
+    case "STOCK":
+      return `재고 ${n(x.inserted)}개 품목 갱신${x.newProducts ? ` (신규 품목 ${n(x.newProducts)})` : ""}, 기준 시각 ${time}`;
+    case "SALES":
+    case "PRODUCTION":
+      return `${kind === "SALES" ? "출고" : "생산"}실적 ${n(x.inserted)}행 추가${x.duplicates ? `, 이미 있던 ${n(x.duplicates)}행 건너뜀` : ""}${
+        x.period ? ` (${x.period.from} ~ ${x.period.to})` : ""
+      }`;
+    case "PRODUCT":
+      return `제품 신규 ${n(x.newProducts)}, 갱신 ${n(x.updated ?? 0)}`;
+    case "CUSTOMER":
+      return `거래처 신규 ${n(x.newCustomers)}, 갱신 ${n(x.updated ?? 0)}`;
+  }
+}
+
+function NextAction({ kind }: { kind: UploadKind }) {
+  const btn = "inline-flex h-11 items-center rounded-md px-4 text-sm font-semibold";
+  if (kind === "STOCK" || kind === "PRODUCT") {
+    return (
+      <Link href="/stock" className={`${btn} bg-zinc-900 text-white`}>
+        재고 확인하기 →
+      </Link>
+    );
+  }
+  if (kind === "SALES" || kind === "PRODUCTION") {
+    return (
+      <button type="button" disabled className={`${btn} cursor-not-allowed bg-zinc-200 text-zinc-500`} title="F5 추이 분석 구현 후 열립니다">
+        추이 보기 → (준비 중)
+      </button>
+    );
+  }
+  return null;
+}
+
+function ResultCard({ r, kind }: { r: UploadResponse; kind: UploadKind }) {
   if (r.status === "saved") {
     const x = r.result;
     return (
       <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
-        <p className="font-semibold text-green-800">
-          저장 완료 — {x.inserted.toLocaleString()}행 ({(r.elapsedMs / 1000).toFixed(1)}초)
-        </p>
+        <p className="text-base font-semibold text-green-800">{summarize(kind, r)}</p>
         <ul className="mt-2 space-y-1 text-green-900">
-          <li>업로드 시각: {formatDateTime(r.uploadedAt)}</li>
-          <li>파일 형식: {r.format}</li>
-          {x.period && (
-            <li>
-              기간: {x.period.from} ~ {x.period.to}
-            </li>
-          )}
-          {x.duplicates !== undefined && x.duplicates > 0 && (
-            <li>이미 있던 행 {x.duplicates.toLocaleString()} 건너뜀 (새로 저장된 행 {x.inserted.toLocaleString()})</li>
-          )}
-          {x.updated !== undefined && x.updated > 0 && <li>기존 {x.updated.toLocaleString()}건 갱신</li>}
-          {x.newProducts > 0 && <li>신규 품목 {x.newProducts}개 생성</li>}
-          {x.newCustomers > 0 && <li>신규 거래처 {x.newCustomers}곳 생성</li>}
-          {x.skipped > 0 && <li>건너뛴 행 {x.skipped}</li>}
+          <li>
+            업로드 시각: {formatDateTime(r.uploadedAt)} · {(r.elapsedMs / 1000).toFixed(1)}초 · {r.format}
+          </li>
+          <li>
+            신규 {(x.newProducts + x.newCustomers).toLocaleString()} · 갱신 {(x.updated ?? 0).toLocaleString()} · 중복 건너뜀{" "}
+            {(x.duplicates ?? 0).toLocaleString()} · 빈 행/오류 건너뜀 {x.skipped.toLocaleString()}
+          </li>
           {x.note && <li>{x.note}</li>}
         </ul>
+        <div className="mt-3">
+          <NextAction kind={kind} />
+        </div>
         {x.errors.length > 0 && (
           <details className="mt-2">
             <summary className="cursor-pointer text-red-700">오류 행 {x.errors.length}건 보기</summary>

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { UPLOAD_KIND_LABEL } from "@/lib/excel/upload";
 import { formatDateTime } from "@/lib/format";
 import { redirect } from "next/navigation";
+import RecentUploads from "./RecentUploads";
 import UploadForm from "./UploadForm";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
   const initialKind = (Object.keys(UPLOAD_KIND_LABEL).includes(kind ?? "") ? kind : "STOCK") as UploadKind;
 
   const [batches, latestStock] = await Promise.all([
-    prisma.uploadBatch.findMany({ orderBy: { uploadedAt: "desc" }, take: 20 }),
+    prisma.uploadBatch.findMany({ orderBy: { uploadedAt: "desc" }, take: 30 }),
     prisma.uploadBatch.findFirst({ where: { kind: "STOCK" }, orderBy: { uploadedAt: "desc" } }),
   ]);
 
@@ -23,6 +24,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-4">
       <header>
         <h1 className="text-xl font-bold">엑셀 업로드</h1>
+        <p className="mt-1 text-sm text-zinc-700">매일 아침 ERP 재고 엑셀을 올리면 영업팀이 최신 수량을 봅니다.</p>
         <p className="mt-1 text-sm text-zinc-600">
           재고 기준 시점:{" "}
           {latestStock ? (
@@ -35,25 +37,16 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
 
       <UploadForm initialKind={initialKind} />
 
-      <section>
-        <h2 className="mb-2 text-base font-semibold">최근 업로드</h2>
-        {batches.length === 0 ? (
-          <p className="text-sm text-zinc-500">업로드 이력이 없습니다.</p>
-        ) : (
-          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white text-sm">
-            {batches.map((b) => (
-              <li key={b.id} className="flex items-center gap-3 px-3 py-2">
-                <span className="w-20 shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-center text-xs font-medium">
-                  {UPLOAD_KIND_LABEL[b.kind as UploadKind] ?? b.kind}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{b.fileName}</span>
-                <span className="shrink-0 text-zinc-500">{b.rowCount.toLocaleString()}행</span>
-                <span className="shrink-0 text-zinc-500">{formatDateTime(b.uploadedAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <RecentUploads
+        items={batches.map((b) => ({
+          id: b.id,
+          kind: UPLOAD_KIND_LABEL[b.kind as UploadKind] ?? b.kind,
+          fileName: b.fileName,
+          rowCount: b.rowCount,
+          uploadedAt: formatDateTime(b.uploadedAt),
+          uploadedBy: b.uploadedBy,
+        }))}
+      />
     </main>
   );
 }

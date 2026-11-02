@@ -91,3 +91,18 @@ export async function getProductDetail(code: string) {
   ]);
   return { product, stock: stocks.get(code)!, history };
 }
+
+/** 최근 재고 업로드에 있는 품목 중 가용재고 ≤ threshold. 가용재고 오름차순 */
+export async function listLowStock(threshold: number): Promise<StockRow[]> {
+  const batch = await getLatestStockBatch();
+  if (!batch) return [];
+  const products = await prisma.product.findMany({
+    where: { isActive: true, snapshots: { some: { batchId: batch.id } } },
+    select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true },
+  });
+  const stocks = await computeForProducts(products.map((p) => p.code));
+  return products
+    .map((p) => ({ ...p, stock: stocks.get(p.code)! }))
+    .filter((r) => r.stock.available <= threshold)
+    .sort((a, b) => a.stock.available - b.stock.available);
+}
