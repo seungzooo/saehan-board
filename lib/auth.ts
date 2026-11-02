@@ -13,3 +13,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
 export function canUpload(user: SessionUser | null): boolean {
   return !!user && (user.role === "STOCK" || user.role === "ADMIN");
 }
+
+export function canAdjust(user: SessionUser | null): boolean {
+  return !!user && (user.role === "STOCK" || user.role === "ADMIN");
+}
