@@ -79,10 +79,14 @@ model StockAdjustment {
   createdBy   String
   createdAt   DateTime  @default(now())
   cancelledAt DateTime?
+  orderId     Int? // (SHIPMENT) 이 출고가 이행한 수주(ORDER) 변동. 연결되면 해당 수주 차감은 해제 (이중 차감 방지)
 
-  product Product @relation(fields: [productCode], references: [code])
+  product    Product           @relation(fields: [productCode], references: [code])
+  order      StockAdjustment?  @relation("OrderFulfilment", fields: [orderId], references: [id])
+  shipments  StockAdjustment[] @relation("OrderFulfilment")
 
   @@index([productCode, createdAt])
+  @@index([orderId])
 }
 
 /// ERP 생산실적. 전표구분 32(재가공투입)는 생산이 아니므로 집계 시 제외

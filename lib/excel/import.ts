@@ -23,7 +23,8 @@ import { applyMapping, productPrefix, slipTypeCode, toIsoDate, toNumber } from "
 type Db = PrismaClient;
 const CHUNK = 500;
 
-export type RowError = { row: number; message: string };
+export type RowErrorKind = "CODE" | "QTY" | "OTHER"; // 품번 불일치 / 수량 누락·오류 / 기타
+export type RowError = { row: number; message: string; kind: RowErrorKind; code?: string };
 export type ImportResult = {
   ok: true;
   inserted: number;
@@ -41,8 +42,8 @@ export type ImportOutcome = ImportResult | ImportFailure;
 
 type ProductSeed = { name: string; itemType?: string; capacity?: string; packUnit?: string; unitsPerBox?: number };
 
-function pushErr(errs: RowError[], row: number, message: string) {
-  errs.push({ row, message });
+function pushErr(errs: RowError[], row: number, message: string, kind: RowErrorKind = "OTHER", code?: string) {
+  errs.push({ row, message, kind, code });
 }
 
 async function chunked<T>(items: T[], fn: (chunk: T[]) => Promise<unknown>) {
@@ -111,24 +112,39 @@ export async function importStock(
   if (!mapped.ok) return mapped;
   const errors: RowError[] = [];
   const qty = new Map<string, number>();
-  const names = new Map<string, ProductSeed>();
   let skipped = 0;
+  // 재고 파일의 품번은 제품 마스터에 있어야 한다. 없으면 "품번 불일치"로 보고하고 저장하지 않는다
+  // (판매·생산실적은 신규 품번을 자동 생성하지만, 재고는 오타를 걸러내는 쪽이 안전)
+  const codesInFile = [...new Set(mapped.rows.map((r) => r.productCode).filter(Boolean))];
+  const known = new Set<string>();
+  await chunked(codesInFile, async (c) => {
+    (await db.product.findMany({ where: { code: { in: c } }, select: { code: true } })).forEach((p) => known.add(p.code));
+  });
   for (const r of mapped.rows) {
     const code = r.productCode;
     if (!code) {
       skipped++;
       continue;
     }
+    if (!known.has(code)) {
+      pushErr(errors, r.__row, `품번 불일치: "${code}" 이(가) 제품 마스터에 없음`, "CODE", code);
+      skipped++;
+      continue;
+    }
+    if (r.qtyBox === "") {
+      pushErr(errors, r.__row, `수량 누락: ${code}`, "QTY", code);
+      skipped++;
+      continue;
+    }
     const n = toNumber(r.qtyBox);
     if (Number.isNaN(n)) {
-      pushErr(errors, r.__row, `재고수량이 숫자가 아님: "${r.qtyBox}"`);
+      pushErr(errors, r.__row, `수량 오류: ${code} 재고수량이 숫자가 아님 "${r.qtyBox}"`, "QTY", code);
       skipped++;
       continue;
     }
     qty.set(code, (qty.get(code) ?? 0) + n);
-    if (!names.has(code)) names.set(code, { name: r.productName });
   }
-  const newProducts = await ensureProducts(db, names);
+  const newProducts = 0;
   const data = [...qty.entries()].map(([productCode, q]) => ({
     productCode,
     qtyBox: Math.round(q),

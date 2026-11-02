@@ -1,29 +1,33 @@
 "use client";
 
-import type { AdjustmentItem } from "@/lib/adjust";
+import type { AdjustmentItem, OpenOrder } from "@/lib/adjust";
 import { REASON_LABEL, type AvailableStock } from "@/lib/availableStock";
 import { formatShort } from "@/lib/format";
-import { availableText } from "@/lib/stockDisplay";
+import { availableText, productInfoText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
-import { cancelAdjustmentAction, createAdjustmentAction, searchProductsAction, type ProductHit } from "./actions";
+import { cancelAdjustmentAction, createAdjustmentAction, listOpenOrdersAction, searchProductsAction, type ProductHit } from "./actions";
 
 /**
  * 3터치 흐름: ① 품목 탭 → ② 수량 입력 → ③ 저장.
  * 사유는 기본 "출고"라 바꿀 때만 탭한다. 메모는 선택.
+ * 출고일 때 미이행 수주가 있으면 "어느 수주 건인지" 선택 — 연결하면 그 수주 차감이 해제된다(이중 차감 방지).
  */
 const REASONS = [
   { value: "SHIPMENT", label: "출고" },
   { value: "DEFECT", label: "불량" },
+  { value: "ORDER", label: "수주" },
   { value: "OTHER", label: "기타" },
 ] as const;
-
+type Reason = (typeof REASONS)[number]["value"];
 
 export default function AdjustForm({
   preselected,
+  initialOpenOrders,
   initialRecent,
 }: {
   preselected: ProductHit | null;
+  initialOpenOrders: OpenOrder[];
   initialRecent: AdjustmentItem[];
 }) {
   const [product, setProduct] = useState<ProductHit | null>(preselected);
@@ -31,8 +35,10 @@ export default function AdjustForm({
   const [hits, setHits] = useState<ProductHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [qty, setQty] = useState("");
-  const [reason, setReason] = useState<(typeof REASONS)[number]["value"]>("SHIPMENT");
+  const [reason, setReason] = useState<Reason>("SHIPMENT");
   const [memo, setMemo] = useState("");
+  const [openOrders, setOpenOrders] = useState<OpenOrder[]>(initialOpenOrders);
+  const [orderId, setOrderId] = useState<number | "">("");
   const [recent, setRecent] = useState(initialRecent);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string; stock?: AvailableStock } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -60,9 +66,18 @@ export default function AdjustForm({
     }, 300);
   }
 
+  async function loadOrders(code: string) {
+    const list = await listOpenOrdersAction(code);
+    setOpenOrders(list);
+    setOrderId("");
+  }
+
   function pick(p: ProductHit) {
     setProduct(p);
     setFlash(null);
+    setOpenOrders([]);
+    setOrderId("");
+    void loadOrders(p.code);
     setTimeout(() => qtyRef.current?.focus(), 0);
   }
 
@@ -70,8 +85,15 @@ export default function AdjustForm({
     setProduct(null);
     setQ("");
     setHits([]);
+    setOpenOrders([]);
+    setOrderId("");
     setFlash(null);
     setTimeout(() => searchRef.current?.focus(), 0);
+  }
+
+  function pickOrder(o: OpenOrder) {
+    setOrderId(o.id);
+    if (!qty) setQty(String(o.qtyBox));
   }
 
   function submit(e: React.FormEvent) {
@@ -82,8 +104,9 @@ export default function AdjustForm({
       setFlash({ kind: "err", text: "수량은 1 이상의 정수로 입력하세요." });
       return;
     }
+    const linked = reason === "SHIPMENT" && orderId !== "" ? orderId : null;
     startTransition(async () => {
-      const r = await createAdjustmentAction({ productCode: product.code, qtyBox: n, reason, memo });
+      const r = await createAdjustmentAction({ productCode: product.code, qtyBox: n, reason, memo, orderId: linked });
       if (!r.ok) {
         setFlash({ kind: "err", text: r.message });
         return;
@@ -91,17 +114,19 @@ export default function AdjustForm({
       setRecent((list) => [r.item, ...list].slice(0, 50));
       setFlash({
         kind: "ok",
-        text: `${product.name} ${REASON_LABEL[reason]} −${n.toLocaleString()} 저장`,
+        text: `${product.name} ${REASON_LABEL[reason]} −${n.toLocaleString()} 저장${linked ? " (수주 차감 해제)" : ""}`,
         stock: r.stock,
       });
       setQty("");
       setMemo("");
+      await loadOrders(product.code);
       qtyRef.current?.focus();
     });
   }
 
   function cancel(item: AdjustmentItem) {
-    if (!window.confirm(`${item.productName} ${REASON_LABEL[item.reason as keyof typeof REASON_LABEL] ?? item.reason} −${item.qtyBox} 변동을 취소할까요?`)) return;
+    const label = REASON_LABEL[item.reason as keyof typeof REASON_LABEL] ?? item.reason;
+    if (!window.confirm(`${item.productName} ${label} −${item.qtyBox} 변동을 취소할까요?`)) return;
     startTransition(async () => {
       const r = await cancelAdjustmentAction(item.id);
       if (!r.ok) {
@@ -110,6 +135,7 @@ export default function AdjustForm({
       }
       setRecent((list) => list.map((x) => (x.id === r.item.id ? r.item : x)));
       setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 가용재고 ${availableText(r.stock)}`, stock: r.stock });
+      if (product && product.code === item.productCode) await loadOrders(product.code);
     });
   }
 
@@ -121,10 +147,7 @@ export default function AdjustForm({
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
               <p className="truncate font-medium">{product.name}</p>
-              <p className="text-xs text-zinc-500">
-                <span className="font-mono">{product.code}</span>
-                {product.capacity && ` · ${product.capacity}`} · {product.packUnit} {product.unitsPerBox.toLocaleString()}개
-              </p>
+              <p className="truncate text-xs text-zinc-500">{productInfoText(product)}</p>
             </div>
             <button type="button" onClick={changeProduct} className="shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm">
               변경
@@ -149,9 +172,7 @@ export default function AdjustForm({
                   <li key={h.code}>
                     <button type="button" onClick={() => pick(h)} className="flex w-full flex-col items-start px-1 py-3 text-left active:bg-zinc-50">
                       <span className="font-medium">{h.name}</span>
-                      <span className="text-xs text-zinc-500">
-                        <span className="font-mono">{h.code}</span> · {h.packUnit} {h.unitsPerBox.toLocaleString()}개
-                      </span>
+                      <span className="text-xs text-zinc-500">{productInfoText(h)}</span>
                     </button>
                   </li>
                 ))}
@@ -178,7 +199,7 @@ export default function AdjustForm({
               className="h-14 rounded-lg border border-zinc-300 px-4 text-2xl font-semibold tabular-nums outline-none focus:border-blue-500"
             />
           </label>
-          <div role="radiogroup" aria-label="사유" className="grid grid-cols-3 gap-2">
+          <div role="radiogroup" aria-label="사유" className="grid grid-cols-4 gap-2">
             {REASONS.map((r) => (
               <button
                 key={r.value}
@@ -194,19 +215,38 @@ export default function AdjustForm({
               </button>
             ))}
           </div>
+
+          {reason === "SHIPMENT" && openOrders.length > 0 && (
+            <fieldset className="rounded-md bg-zinc-50 p-3 text-sm">
+              <legend className="text-zinc-700">어느 수주 건인가요? (연결하면 그 수주 차감이 해제됩니다)</legend>
+              <div className="mt-2 flex flex-col gap-1">
+                <label className={`flex h-10 items-center rounded-md border px-3 ${orderId === "" ? "border-blue-600 bg-white" : "border-zinc-200 bg-white"}`}>
+                  <input type="radio" name="orderId" checked={orderId === ""} onChange={() => setOrderId("")} className="mr-2" />
+                  수주와 무관한 출고
+                </label>
+                {openOrders.map((o) => (
+                  <label
+                    key={o.id}
+                    className={`flex h-10 items-center rounded-md border px-3 ${orderId === o.id ? "border-blue-600 bg-white" : "border-zinc-200 bg-white"}`}
+                  >
+                    <input type="radio" name="orderId" checked={orderId === o.id} onChange={() => pickOrder(o)} className="mr-2" />
+                    수주 {o.qtyBox.toLocaleString()}박스 · {formatShort(o.createdAt)}
+                    {o.memo && ` · ${o.memo}`}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
           <input
             type="text"
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
-            placeholder="메모 (선택)"
+            placeholder={reason === "ORDER" ? "메모 (거래처·납기 등, 선택)" : "메모 (선택)"}
             maxLength={200}
             className="h-11 rounded-lg border border-zinc-300 px-4 text-sm outline-none focus:border-blue-500"
           />
-          <button
-            type="submit"
-            disabled={pending || !qty}
-            className="h-14 rounded-lg bg-blue-600 text-lg font-bold text-white disabled:bg-zinc-300"
-          >
+          <button type="submit" disabled={pending || !qty} className="h-14 rounded-lg bg-blue-600 text-lg font-bold text-white disabled:bg-zinc-300">
             {pending ? "저장 중…" : "저장"}
           </button>
         </form>
@@ -250,8 +290,9 @@ export default function AdjustForm({
                 <li key={it.id} className={`flex items-center gap-2 px-3 py-2 ${cancelled ? "text-zinc-400" : ""}`}>
                   <div className={`min-w-0 flex-1 ${cancelled ? "line-through" : ""}`}>
                     <p className="truncate font-medium">{it.productName}</p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="truncate text-xs text-zinc-500">
                       {REASON_LABEL[it.reason as keyof typeof REASON_LABEL] ?? it.reason} −{it.qtyBox.toLocaleString()}
+                      {it.orderId != null && ` · 수주 #${it.orderId} 이행`}
                       {it.memo && ` · ${it.memo}`} · {formatShort(it.createdAt)} {it.createdBy}
                     </p>
                   </div>

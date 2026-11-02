@@ -1,6 +1,6 @@
 import type { UploadKind } from "@/config/excel-mapping";
 import { getDashboard, LOW_STOCK_THRESHOLD } from "@/lib/dashboard";
-import { basisText, StaleBadge } from "@/lib/stockDisplay";
+import { basisText, SampleBadge, StaleBadge } from "@/lib/stockDisplay";
 import { UPLOAD_KIND_LABEL } from "@/lib/excel/upload";
 import { formatDateTime } from "@/lib/format";
 import Link from "next/link";
@@ -24,7 +24,14 @@ export default async function Home() {
           value={d.batch ? basisText(d.batch) : "재고 파일 없음"}
           small={!!d.batch}
           tone={d.batch ? "normal" : "warn"}
-          badge={d.batch ? <StaleBadge uploadedAt={d.batch.uploadedAt} /> : null}
+          badge={
+            d.batch ? (
+              <>
+                <StaleBadge uploadedAt={d.batch.uploadedAt} />
+                <SampleBadge fileName={d.batch.fileName} />
+              </>
+            ) : null
+          }
         />
         <Tile href="/stock" label="등록 품목" value={d.productCount.toLocaleString()} unit="개" />
         <Tile href="/adjust" label="오늘 변동" value={d.todayAdjustments.toLocaleString()} unit="건" />
@@ -54,7 +61,10 @@ export default async function Home() {
                   <span className="w-20 shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-center text-xs font-medium">
                     {UPLOAD_KIND_LABEL[b.kind as UploadKind] ?? b.kind}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{b.fileName}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {b.fileName}
+                    <SampleBadge fileName={b.fileName} />
+                  </span>
                   <span className="shrink-0 text-xs text-zinc-500">{formatDateTime(b.uploadedAt)}</span>
                 </Link>
               </li>

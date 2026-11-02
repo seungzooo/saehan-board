@@ -3,6 +3,7 @@
  */
 import { computeAvailableStock, type AvailableStock } from "@/lib/availableStock";
 import { prisma } from "@/lib/db";
+import { capacityQueryVariants, rankProducts } from "@/lib/search";
 
 export type StockRow = {
   code: string;
@@ -10,6 +11,7 @@ export type StockRow = {
   capacity: string | null;
   packUnit: string;
   unitsPerBox: number;
+  category: string | null;
   stock: AvailableStock;
 };
 
@@ -40,24 +42,36 @@ export async function getStockBasis(): Promise<StockBasis> {
   return b ? { uploadedAt: b.uploadedAt, stockAsOf: b.stockAsOf, batchId: b.id } : null;
 }
 
-/** 품목명·코드 부분일치 검색 → 가용재고 포함 행. 공백으로 나눈 단어 모두 포함(AND) */
+/**
+ * 품목명·코드 부분일치 검색 → 가용재고 포함 행. 공백으로 나눈 단어 모두 포함(AND).
+ * 용량 인식: "2L"은 capacity 2000·이름의 2000ml도 후보에 넣고, 순위는 lib/search.ts rankProducts
+ * (품번 정확 일치 → 용량 일치 → 온전한 토큰 → 부분 일치).
+ */
 export async function searchStock(query: string): Promise<{ rows: StockRow[]; truncated: boolean }> {
   const terms = query.trim().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return { rows: [], truncated: false };
 
-  const products = await prisma.product.findMany({
+  const candidates = await prisma.product.findMany({
     where: {
       isActive: true,
-      AND: terms.map((t) => ({
-        OR: [{ name: { contains: t, mode: "insensitive" } }, { code: { contains: t, mode: "insensitive" } }],
-      })),
+      AND: terms.map((t) => {
+        const variants = capacityQueryVariants(t);
+        return {
+          OR: [
+            { name: { contains: t, mode: "insensitive" as const } },
+            { code: { contains: t, mode: "insensitive" as const } },
+            ...(variants.length ? [{ capacity: { in: variants } }] : []),
+            ...variants.filter((v) => v !== t).map((v) => ({ name: { contains: v, mode: "insensitive" as const } })),
+          ],
+        };
+      }),
     },
-    orderBy: [{ name: "asc" }],
-    take: SEARCH_LIMIT + 1,
-    select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true },
+    take: 400,
+    select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
   });
-  const truncated = products.length > SEARCH_LIMIT;
-  const page = products.slice(0, SEARCH_LIMIT);
+  const ranked = rankProducts(candidates, query);
+  const truncated = ranked.length > SEARCH_LIMIT;
+  const page = ranked.slice(0, SEARCH_LIMIT);
   const stocks = await computeForProducts(page.map((p) => p.code));
   return { rows: page.map((p) => ({ ...p, stock: stocks.get(p.code)! })), truncated };
 }
@@ -76,7 +90,7 @@ export async function computeForProducts(codes: string[]): Promise<Map<string, A
       : Promise.resolve([]),
     prisma.stockAdjustment.findMany({
       where: { productCode: { in: codes } },
-      select: { productCode: true, qtyBox: true, reason: true, createdAt: true, cancelledAt: true },
+      select: { id: true, productCode: true, qtyBox: true, reason: true, createdAt: true, cancelledAt: true, orderId: true },
     }),
     getDefectResetAt(),
   ]);
@@ -121,7 +135,7 @@ export async function listLowStock(threshold: number): Promise<StockRow[]> {
   if (!batch) return [];
   const products = await prisma.product.findMany({
     where: { isActive: true, snapshots: { some: { batchId: batch.id } } },
-    select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true },
+    select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
   });
   const stocks = await computeForProducts(products.map((p) => p.code));
   return products

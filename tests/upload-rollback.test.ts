@@ -14,7 +14,8 @@ type Batch = { id: string; kind: string; fileName: string; fileHash: string; upl
 type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: Date | null; uploadedAt: Date };
 
 function makeFakeDb() {
-  const state = { batches: [] as Batch[], snapshots: [] as Snap[], products: new Set<string>() };
+  // 제품 마스터에 있는 품번만 재고 파일에서 받아들인다 (없으면 "품번 불일치")
+  const state = { batches: [] as Batch[], snapshots: [] as Snap[], products: new Set<string>(["TM00329", "EM00001"]) };
   let seq = 0;
   const client = (s: typeof state) => ({
     uploadBatch: {
@@ -58,7 +59,9 @@ function makeFakeDb() {
 const cp949 = (text: string) => new Uint8Array(iconv.encode(text, "cp949"));
 const GOOD = "품번\t품명/규격\t재고수량(박스)\r\nTM00329\t지평 1.7L\t120\r\nEM00001\tCJ 식용유\t0\r\n";
 const BAD_COLUMNS = "품번\t품명\r\nTM00329\t지평 1.7L\r\n";
-const ROW_ERROR = "품번\t품명/규격\t재고수량\r\nTM00329\t지평 1.7L\t130\r\nEM00001\tCJ 식용유\tabc\r\n";
+// 3행 수량 오류(숫자 아님), 4행 품번 불일치, 5행 수량 누락
+const ROW_ERROR =
+  "품번\t품명/규격\t재고수량\r\nTM00329\t지평 1.7L\t130\r\nEM00001\tCJ 식용유\tabc\r\nZZ9999\t없는 품번\t5\r\nTM00329\t지평 1.7L\t\r\n";
 
 describe("잘못된 재고 파일 → 직전 기준 유지", () => {
   let fake: ReturnType<typeof makeFakeDb>;
@@ -93,9 +96,13 @@ describe("잘못된 재고 파일 → 직전 기준 유지", () => {
     const r = await processUpload("STOCK", "rowerr.xls", cp949(ROW_ERROR), "t", {}, fake.db);
     expect(r.status).toBe("row-errors");
     if (r.status !== "row-errors") return;
-    expect(r.errorCount).toBe(1);
+    expect(r.errorCount).toBe(3);
     expect(r.validRows).toBe(1);
-    expect(r.errors[0]).toMatchObject({ row: 3 });
+    expect(r.errors.map((e) => [e.row, e.kind])).toEqual([
+      [3, "QTY"], // 숫자 아님
+      [4, "CODE"], // 품번 불일치
+      [5, "QTY"], // 수량 누락
+    ]);
     expect(fake.state.batches).toHaveLength(1); // 직전 기준 유지
     expect(fake.state.snapshots.find((s) => s.productCode === "TM00329")?.qtyBox).toBe(120);
   });
@@ -104,7 +111,7 @@ describe("잘못된 재고 파일 → 직전 기준 유지", () => {
     const r = await processUpload("STOCK", "rowerr.xls", cp949(ROW_ERROR), "t", { allowRowErrors: true }, fake.db);
     expect(r.status).toBe("saved");
     if (r.status !== "saved") return;
-    expect(r.result.errors).toHaveLength(1);
+    expect(r.result.errors).toHaveLength(3);
     const latest = fake.state.batches[1];
     const snaps = fake.state.snapshots.filter((s) => s.batchId === latest.id);
     expect(snaps.map((s) => s.productCode)).toEqual(["TM00329"]);

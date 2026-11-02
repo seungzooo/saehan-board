@@ -1,5 +1,6 @@
 "use client";
 
+import { SampleBadge } from "@/lib/stockDisplay";
 import { useState } from "react";
 
 type Item = { id: string; kind: string; fileName: string; rowCount: number; uploadedAt: string; uploadedBy: string };
@@ -20,7 +21,10 @@ export default function RecentUploads({ items }: { items: Item[] }) {
             {shown.map((b) => (
               <li key={b.id} className="flex items-center gap-3 px-3 py-2">
                 <span className="w-20 shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-center text-xs font-medium">{b.kind}</span>
-                <span className="min-w-0 flex-1 truncate">{b.fileName}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {b.fileName}
+                  <SampleBadge fileName={b.fileName} />
+                </span>
                 <span className="shrink-0 text-xs text-zinc-500">{b.rowCount.toLocaleString()}행</span>
                 <span className="shrink-0 text-right text-xs text-zinc-500">
                   {b.uploadedAt}

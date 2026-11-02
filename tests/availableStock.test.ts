@@ -120,4 +120,37 @@ describe("computeAvailableStock", () => {
     );
     expect(r.todayDeduction).toBe(8);
   });
+
+  describe("수주 → 출고 이중 차감 방지", () => {
+    const base = { qtyBox: 100, uploadedAt: T("2026-01-10T09:00") };
+    const order = { ...adj(20, "ORDER", "2026-01-10T10:00"), id: 1 };
+
+    it("기초 100 → 수주 20 → 가용 80", () => {
+      expect(computeAvailableStock(base, [order]).available).toBe(80);
+    });
+
+    it("그 수주를 출고로 등록(orderId 연결) → 가용 80 (수주 차감 해제)", () => {
+      const ship = { ...adj(20, "SHIPMENT", "2026-01-10T14:00"), id: 2, orderId: 1 };
+      const r = computeAvailableStock(base, [order, ship]);
+      expect(r.available).toBe(80);
+      expect(r.deductions).toMatchObject({ ORDER: 0, SHIPMENT: 20 });
+    });
+
+    it("연결 없이 출고하면 둘 다 차감된다 (60) — 연결이 이중 차감을 막는 유일한 수단", () => {
+      const ship = { ...adj(20, "SHIPMENT", "2026-01-10T14:00"), id: 2 };
+      expect(computeAvailableStock(base, [order, ship]).available).toBe(60);
+    });
+
+    it("연결된 출고가 취소되면 수주 차감이 되살아난다 (80)", () => {
+      const ship = { ...adj(20, "SHIPMENT", "2026-01-10T14:00", "2026-01-10T15:00"), id: 2, orderId: 1 };
+      const r = computeAvailableStock(base, [order, ship]);
+      expect(r.available).toBe(80);
+      expect(r.deductions).toMatchObject({ ORDER: 20, SHIPMENT: 0 });
+    });
+
+    it("부분 출고(수주 20 중 출고 15)도 연결하면 수주 전체가 해제되어 85", () => {
+      const ship = { ...adj(15, "SHIPMENT", "2026-01-10T14:00"), id: 2, orderId: 1 };
+      expect(computeAvailableStock(base, [order, ship]).available).toBe(85);
+    });
+  });
 });

@@ -34,9 +34,16 @@ test("390px 검색 → 상세: 수량·집계 시각이 첫 화면에, 가로 �
 
   await expect(page.getByTestId("stock-summary")).toBeVisible();
   await expectInFirstScreen(page, '[data-testid="available"]', "가용재고 수량");
-  // "집계 기준 MM-DD HH:mm" 또는 "집계 시각 미확인" 둘 중 하나가 첫 화면에
-  await expectInFirstScreen(page, '[data-testid="stock-summary"] p:has-text("집계")', "집계 기준 시각");
-  await expect(page.getByTestId("available")).toHaveText(/확인 필요|[\d,]+/);
+  // 파일에 있는 품목: "재고 집계 기준 …" 또는 "집계 시각 미확인"이 첫 화면에.
+  // 파일에 없는 품목: 시각 대신 "재고 확인 필요" 안내만 (파일 시각을 보여주지 않는다)
+  const available = await page.getByTestId("available").textContent();
+  if (available?.includes("재고 확인 필요")) {
+    await expectInFirstScreen(page, '[data-testid="stock-summary"] p:has-text("최근 재고 파일에 이 품목이 없습니다")', "재고 확인 필요 안내");
+    await expect(page.getByTestId("stock-summary")).not.toContainText("파일 반영");
+  } else {
+    await expectInFirstScreen(page, '[data-testid="stock-summary"] p:has-text("집계")', "재고 집계 기준 시각");
+    await expect(page.getByTestId("available")).toHaveText(/[\d,]+/);
+  }
   await expectNoHorizontalScroll(page);
 });
 

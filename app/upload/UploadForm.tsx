@@ -1,8 +1,10 @@
 "use client";
 
 import type { UploadKind } from "@/config/excel-mapping";
+import type { RowError } from "@/lib/excel/import";
 import type { UploadResponse } from "@/lib/excel/upload";
 import { formatDateTime, seoulParts } from "@/lib/format";
+import { isSampleFileName } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
@@ -40,6 +42,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   const [asOf, setAsOf] = useState(nowSeoulLocal);
   const [defectApplied, setDefectApplied] = useState<"yes" | "no">("no");
   const [result, setResult] = useState<UploadResponse | null>(null);
+  const [lastFileName, setLastFileName] = useState("");
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -55,6 +58,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
       fd.set("defectApplied", defectApplied);
     }
     if (allowRowErrors) fd.set("allowRowErrors", "1");
+    setLastFileName(file.name);
     setResult(null);
     startTransition(async () => {
       const res = await uploadAction(fd);
@@ -164,7 +168,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
         </button>
       </form>
 
-      {result && <ResultCard r={result} kind={kind} onProceed={() => send(true)} pending={pending} />}
+      {result && <ResultCard r={result} kind={kind} fileName={lastFileName} onProceed={() => send(true)} pending={pending} />}
     </div>
   );
 }
@@ -213,46 +217,79 @@ function NextAction({ kind }: { kind: UploadKind }) {
   return null;
 }
 
+/** 오류 행을 종류별로 집계 — 품번 불일치 / 수량 누락·오류 / 기타 */
+function errorCounts(errors: RowError[]) {
+  let code = 0;
+  let qty = 0;
+  let other = 0;
+  for (const e of errors) {
+    if (e.kind === "CODE") code++;
+    else if (e.kind === "QTY") qty++;
+    else other++;
+  }
+  return { code, qty, other };
+}
+
+function ErrorDetails({ errors, title }: { errors: RowError[]; title: string }) {
+  if (errors.length === 0) return null;
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer font-medium text-red-700">{title}</summary>
+      <ul className="mt-1 max-h-60 list-disc overflow-y-auto pl-5 text-red-800">
+        {errors.slice(0, 200).map((e) => (
+          <li key={e.row}>
+            {e.row}행: {e.message}
+          </li>
+        ))}
+        {errors.length > 200 && <li>… 외 {(errors.length - 200).toLocaleString()}건</li>}
+      </ul>
+    </details>
+  );
+}
+
+function SampleNote({ fileName }: { fileName: string }) {
+  if (!isSampleFileName(fileName)) return null;
+  return (
+    <span className="ml-2 inline-block rounded bg-purple-100 px-1.5 py-0.5 text-xs font-semibold text-purple-800">샘플</span>
+  );
+}
+
 function ResultCard({
   r,
   kind,
+  fileName,
   onProceed,
   pending,
 }: {
   r: UploadResponse;
   kind: UploadKind;
+  fileName: string;
   onProceed: () => void;
   pending: boolean;
 }) {
   if (r.status === "saved") {
     const x = r.result;
+    const ec = errorCounts(x.errors);
     return (
       <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
-        <p className="text-base font-semibold text-green-800">{summarize(kind, r)}</p>
+        <p className="text-base font-semibold text-green-800">
+          {summarize(kind, r)}
+          <SampleNote fileName={fileName} />
+        </p>
         <ul className="mt-2 space-y-1 text-green-900">
           <li>
             반영 시각: {formatDateTime(r.uploadedAt)} · {(r.elapsedMs / 1000).toFixed(1)}초 · {r.format}
           </li>
           <li>
-            신규 {(x.newProducts + x.newCustomers).toLocaleString()} · 갱신 {(x.updated ?? 0).toLocaleString()} · 중복 건너뜀{" "}
-            {(x.duplicates ?? 0).toLocaleString()} · 빈 행/오류 건너뜀 {x.skipped.toLocaleString()}
+            정상 반영 {x.inserted.toLocaleString()} · 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
+            {ec.other > 0 && ` · 기타 오류 ${ec.other.toLocaleString()}`}
+            {(x.duplicates ?? 0) > 0 && ` · 중복 건너뜀 ${x.duplicates!.toLocaleString()}`}
+            {(x.updated ?? 0) > 0 && ` · 갱신 ${x.updated!.toLocaleString()}`}
+            {x.newProducts + x.newCustomers > 0 && ` · 신규 ${(x.newProducts + x.newCustomers).toLocaleString()}`}
           </li>
           {x.note && <li>{x.note}</li>}
         </ul>
-        {x.errors.length > 0 && (
-          <details className="mt-2">
-            <summary className="cursor-pointer text-red-700">
-              오류 행 {x.errors.length}건 (해당 품목은 &ldquo;확인 필요&rdquo;)
-            </summary>
-            <ul className="mt-1 list-disc pl-5 text-red-800">
-              {x.errors.slice(0, 20).map((e) => (
-                <li key={e.row}>
-                  {e.row}행: {e.message}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        <ErrorDetails errors={x.errors} title={`문제 행 ${x.errors.length.toLocaleString()}건 펼쳐보기 (해당 품목은 "재고 확인 필요")`} />
         <div className="mt-3">
           <NextAction kind={kind} />
         </div>
@@ -260,21 +297,21 @@ function ResultCard({
     );
   }
   if (r.status === "row-errors") {
+    const ec = errorCounts(r.errors);
     return (
       <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="text-base font-semibold">{r.errorCount.toLocaleString()}행 오류. 아직 저장하지 않았습니다.</p>
-        <p className="mt-1">
-          그대로 진행하면 해당 품목은 &ldquo;확인 필요&rdquo;가 됩니다. 정상 행 {r.validRows.toLocaleString()}건만 저장됩니다. 엑셀을 고쳐
-          다시 올리는 쪽을 권합니다.
+        <p className="text-base font-semibold">
+          {r.errorCount.toLocaleString()}행 오류. 아직 저장하지 않았습니다.
+          <SampleNote fileName={fileName} />
         </p>
-        <ul className="mt-2 list-disc pl-5">
-          {r.errors.slice(0, 20).map((e) => (
-            <li key={e.row}>
-              {e.row}행: {e.message}
-            </li>
-          ))}
-          {r.errorCount > 20 && <li>… 외 {(r.errorCount - 20).toLocaleString()}건</li>}
-        </ul>
+        <p className="mt-1">
+          정상 {r.validRows.toLocaleString()} · 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
+          {ec.other > 0 && ` · 기타 ${ec.other.toLocaleString()}`}
+        </p>
+        <p className="mt-1">
+          그대로 진행하면 해당 품목은 &ldquo;재고 확인 필요&rdquo;가 됩니다. 정상 행만 저장됩니다. 엑셀을 고쳐 다시 올리는 쪽을 권합니다.
+        </p>
+        <ErrorDetails errors={r.errors} title={`문제 행 ${r.errorCount.toLocaleString()}건 펼쳐보기`} />
         <button
           type="button"
           onClick={onProceed}

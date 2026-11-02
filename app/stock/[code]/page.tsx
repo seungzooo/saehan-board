@@ -1,7 +1,7 @@
 import { ADJUSTMENT_REASONS, REASON_LABEL } from "@/lib/availableStock";
 import { formatDateTime } from "@/lib/format";
-import { getProductDetail, getStockBasis } from "@/lib/stock";
-import { availableText, availableTone, BasisLine } from "@/lib/stockDisplay";
+import { getProductDetail } from "@/lib/stock";
+import { availableText, availableTone, BasisLine, productInfoText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -15,13 +15,12 @@ export default async function ProductDetailPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const [{ code }, { q }] = await Promise.all([params, searchParams]);
-  const [detail, basis] = await Promise.all([getProductDetail(decodeURIComponent(code)), getStockBasis()]);
+  const detail = await getProductDetail(decodeURIComponent(code));
   if (!detail) notFound();
   const { product, stock, history } = detail;
   const needsCheck = stock.available === null;
-  // 품목이 파일에 없어도(확인 필요) 최근 재고 파일의 집계·반영 시각은 보여준다
-  const asOf = stock.stockAsOf ?? basis?.stockAsOf ?? null;
-  const uploadedAt = stock.uploadedAt ?? basis?.uploadedAt ?? null;
+  // 최신 파일에 없는 품목에는 파일 시각을 보여주지 않는다 — "재고 확인 필요"만
+  const basis = !needsCheck && stock.uploadedAt ? { uploadedAt: stock.uploadedAt, stockAsOf: stock.stockAsOf, batchId: "" } : null;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
@@ -31,11 +30,7 @@ export default async function ProductDetailPage({
 
       <header className="min-w-0">
         <h1 className="break-words text-xl font-bold">{product.name}</h1>
-        <p className="mt-1 break-words text-sm text-zinc-500">
-          <span className="font-mono">{product.code}</span>
-          {product.capacity && ` · ${product.capacity}`} · {product.packUnit} {product.unitsPerBox.toLocaleString()}개
-          {product.category && ` · ${product.category}`}
-        </p>
+        <p className="mt-1 break-words text-sm text-zinc-500">{productInfoText(product)}</p>
       </header>
 
       <section data-testid="stock-summary" className="rounded-lg border border-zinc-200 bg-white p-4">
@@ -44,11 +39,12 @@ export default async function ProductDetailPage({
           {availableText(stock)}
           {!needsCheck && <span className="ml-1 text-base font-normal text-zinc-500">박스</span>}
         </p>
-        <BasisLine basis={basis} className="mt-1" />
-        {needsCheck && (
-          <p className="mt-2 text-sm text-amber-700">
+        {needsCheck ? (
+          <p className="mt-1 text-sm text-amber-700">
             최근 재고 파일에 이 품목이 없습니다. 재고 담당자가 다음 파일에 포함시키면 수량이 표시됩니다.
           </p>
+        ) : (
+          <BasisLine basis={basis} className="mt-1" />
         )}
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
           <dt className="text-zinc-500">기초재고</dt>
@@ -58,10 +54,14 @@ export default async function ProductDetailPage({
           ))}
           <dt className="text-zinc-500">오늘 차감</dt>
           <dd className="text-right tabular-nums">{stock.todayDeduction.toLocaleString()}</dd>
-          <dt className="text-zinc-500">집계 기준</dt>
-          <dd className="text-right">{asOf ? formatDateTime(asOf) : "미확인"}</dd>
-          <dt className="text-zinc-500">반영 시각</dt>
-          <dd className="text-right">{uploadedAt ? formatDateTime(uploadedAt) : "—"}</dd>
+          {!needsCheck && (
+            <>
+              <dt className="text-zinc-500">재고 집계 기준</dt>
+              <dd className="text-right">{stock.stockAsOf ? formatDateTime(stock.stockAsOf) : "미확인"}</dd>
+              <dt className="text-zinc-500">파일 반영 시각</dt>
+              <dd className="text-right">{stock.uploadedAt ? formatDateTime(stock.uploadedAt) : "—"}</dd>
+            </>
+          )}
         </dl>
       </section>
 

@@ -1,6 +1,6 @@
 import { LOW_STOCK_THRESHOLD } from "@/config/stock";
 import { getStockBasis, listLowStock, searchStock } from "@/lib/stock";
-import { availableText, availableTone, BasisLine } from "@/lib/stockDisplay";
+import { availableText, availableTone, BasisLine, productInfoText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import SearchBox from "./SearchBox";
 
@@ -57,10 +57,7 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{r.name}</p>
-                      <p className="mt-0.5 truncate text-xs text-zinc-500">
-                        <span className="font-mono">{r.code}</span>
-                        {r.capacity && ` · ${r.capacity}`} · {r.packUnit} {r.unitsPerBox.toLocaleString()}개
-                      </p>
+                      <p className="mt-0.5 truncate text-xs text-zinc-500">{productInfoText(r)}</p>
                       <p className="mt-1 truncate text-xs text-zinc-500">
                         {needsCheck ? "최근 재고 파일에 없음" : `기초 ${s.baseline!.toLocaleString()}`} · 오늘 차감{" "}
                         {s.todayDeduction.toLocaleString()}
