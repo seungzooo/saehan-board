@@ -3,9 +3,9 @@
  *
  * 저장 규칙
  * - STOCK: batch 1개 + 전 품목 StockSnapshot. 같은 품번이 여러 행이면 합산(창고별 행 가정).
- * - SALES / PRODUCTION: 파일이 덮는 기간(최소~최대 일자)의 기존 행을 지우고 다시 넣는다.
- *   (ERP에서 같은 기간을 다시 내려받아 올리면 교체되는 의미). PRODUCTION은 부서별 파일이라
- *   같은 기간 + 같은 부서만 지운다.
+ * - SALES / PRODUCTION: 중복 키(스키마 @@unique)가 같은 행은 건너뛰고 새 행만 넣는다.
+ *   같은 기간을 다시 내려받아 올려도 두 번 저장되지 않는다 (createMany skipDuplicates).
+ *   ERP에서 수정된 행(수량이 바뀐 같은 전표)은 갱신되지 않는다 — 그 경우는 관리자가 기간 삭제 후 재업로드.
  * - PRODUCT / CUSTOMER: upsert.
  */
 import {
@@ -31,6 +31,8 @@ export type ImportResult = {
   errors: RowError[]; // 앞 50건만 보관
   newProducts: number;
   newCustomers: number;
+  updated?: number; // 마스터 업로드: 기존 행 갱신 수 / 재고: 기존 품목 수
+  duplicates?: number; // 실적 업로드: 이미 있어 건너뛴 행
   period?: { from: string; to: string };
   note?: string;
 };
@@ -142,6 +144,7 @@ export async function importStock(
     errors,
     newProducts,
     newCustomers: 0,
+    updated: data.length - newProducts,
     note: mapped.rows.length - skipped !== data.length ? "같은 품번 행은 합산했습니다." : undefined,
   };
 }
@@ -215,18 +218,23 @@ export async function importSales(db: Db, sheet: string[][], ctx: { batchId?: st
   const dates = rows.map((r) => r.date.getTime());
   const from = new Date(Math.min(...dates));
   const to = new Date(Math.max(...dates));
-  await db.shipmentHistory.deleteMany({ where: { date: { gte: from, lte: to } } });
-  await chunked(rows, (c) => db.shipmentHistory.createMany({ data: c }));
+  let inserted = 0;
+  await chunked(rows, async (c) => {
+    const r = await db.shipmentHistory.createMany({ data: c, skipDuplicates: true });
+    inserted += r.count;
+  });
+  const duplicates = rows.length - inserted;
   await refreshCustomerTypes(db);
   return {
     ok: true,
-    inserted: rows.length,
+    inserted,
     skipped,
     errors,
     newProducts,
     newCustomers,
+    duplicates,
     period: { from: isoOf(from), to: isoOf(to) },
-    note: "해당 기간의 기존 출고실적은 교체되었습니다.",
+    note: duplicates > 0 ? `이미 있는 ${duplicates.toLocaleString()}행(같은 출고일자·품번·전표번호)은 건너뛰었습니다.` : undefined,
   };
 }
 
@@ -249,7 +257,6 @@ export async function importProduction(db: Db, sheet: string[][], ctx: { batchId
   const errors: RowError[] = [];
   let skipped = 0;
   const products = new Map<string, ProductSeed>();
-  const depts = new Set<string>();
   const rows: Array<{
     productCode: string;
     date: Date;
@@ -257,6 +264,7 @@ export async function importProduction(db: Db, sheet: string[][], ctx: { batchId
     dept: string | null;
     shift: string | null;
     machine: string | null;
+    workOrderNo: string | null;
     slipType: string;
     unitsPerBox: number | null;
     qtyGood: number;
@@ -285,7 +293,6 @@ export async function importProduction(db: Db, sheet: string[][], ctx: { batchId
     if (!products.has(r.productCode))
       products.set(r.productCode, { name: r.productName, itemType: r.itemType, packUnit: r.packUnit, unitsPerBox: upb });
     const dept = r.dept || null;
-    if (dept) depts.add(dept);
     rows.push({
       productCode: r.productCode,
       date: dateFromIso(iso),
@@ -293,6 +300,7 @@ export async function importProduction(db: Db, sheet: string[][], ctx: { batchId
       dept,
       shift: r.shift ? r.shift.slice(0, 1) : null, // "A A조" → "A"
       machine: r.machine || null,
+      workOrderNo: r.workOrderNo || null,
       slipType: slipTypeCode(r.slipType),
       unitsPerBox: Number.isNaN(upb) || upb <= 0 ? null : Math.round(upb),
       qtyGood: Math.round(good),
@@ -306,22 +314,28 @@ export async function importProduction(db: Db, sheet: string[][], ctx: { batchId
   const dates = rows.map((r) => r.date.getTime());
   const from = new Date(Math.min(...dates));
   const to = new Date(Math.max(...dates));
-  await db.productionHistory.deleteMany({
-    where: { date: { gte: from, lte: to }, ...(depts.size > 0 ? { dept: { in: [...depts] } } : {}) },
+  let inserted = 0;
+  await chunked(rows, async (c) => {
+    const r = await db.productionHistory.createMany({ data: c, skipDuplicates: true });
+    inserted += r.count;
   });
-  await chunked(rows, (c) => db.productionHistory.createMany({ data: c }));
+  const duplicates = rows.length - inserted;
   await chunked([...products.keys()], (c) =>
     db.product.updateMany({ where: { code: { in: c }, isProduced: false }, data: { isProduced: true } }),
   );
   return {
     ok: true,
-    inserted: rows.length,
+    inserted,
     skipped,
     errors,
     newProducts,
     newCustomers: 0,
+    duplicates,
     period: { from: isoOf(from), to: isoOf(to) },
-    note: `해당 기간·부서(${[...depts].join(", ") || "전체"})의 기존 생산실적은 교체되었습니다.`,
+    note:
+      duplicates > 0
+        ? `이미 있는 ${duplicates.toLocaleString()}행(같은 생산일자·품번·작업지시번호·조·호기·전표구분)은 건너뛰었습니다.`
+        : undefined,
   };
 }
 
@@ -333,11 +347,16 @@ export async function importProducts(db: Db, sheet: string[][]): Promise<ImportO
   const errors: RowError[] = [];
   let inserted = 0;
   let skipped = 0;
+  let created = 0;
+  const existing = new Set(
+    (await db.product.findMany({ where: { code: { in: mapped.rows.map((r) => r.code).filter(Boolean) } }, select: { code: true } })).map((p) => p.code),
+  );
   for (const r of mapped.rows) {
     if (!r.code) {
       skipped++;
       continue;
     }
+    if (!existing.has(r.code)) created++;
     const nums = {
       unitsPerBox: toNumber(r.unitsPerBox),
       boxW: toNumber(r.boxW),
@@ -369,7 +388,7 @@ export async function importProducts(db: Db, sheet: string[][]): Promise<ImportO
     });
     inserted++;
   }
-  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: 0 };
+  return { ok: true, inserted, skipped, errors, newProducts: created, newCustomers: 0, updated: inserted - created };
 }
 
 // ───────────────────────── CUSTOMER ─────────────────────────
@@ -380,12 +399,16 @@ export async function importCustomers(db: Db, sheet: string[][]): Promise<Import
   const errors: RowError[] = [];
   let inserted = 0;
   let skipped = 0;
+  let created = 0;
+  const codes = mapped.rows.map((r) => r.code || r.name).filter(Boolean);
+  const existing = new Set((await db.customer.findMany({ where: { code: { in: codes } }, select: { code: true } })).map((c) => c.code));
   for (const r of mapped.rows) {
     const code = r.code || r.name;
     if (!code) {
       skipped++;
       continue;
     }
+    if (!existing.has(code)) created++;
     const t = r.type.toUpperCase().replace(/\s/g, "");
     const type = t.includes("B2B") ? "B2B" : t.includes("B2C") ? "B2C" : null;
     const u = r.orderUnit.toUpperCase();
@@ -408,5 +431,5 @@ export async function importCustomers(db: Db, sheet: string[][]): Promise<Import
     });
     inserted++;
   }
-  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: 0 };
+  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: created, updated: inserted - created };
 }

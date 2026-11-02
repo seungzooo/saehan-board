@@ -46,6 +46,7 @@ export const PRODUCTION_MAPPING = {
   dept: { headers: ["생산부서"], required: false },
   shift: { headers: ["작업조"], required: false },
   machine: { headers: ["생산호기"], required: false },
+  workOrderNo: { headers: ["작업지시번호", "지시번호"], required: false },
   productCode: { headers: ["생산품번", "품번", "품 번"], required: true },
   itemType: { headers: ["생산품종", "품종"], required: false },
   productName: { headers: ["품명/규격", "품명"], required: false },
@@ -55,7 +56,7 @@ export const PRODUCTION_MAPPING = {
   qtyGood: { headers: ["수량(A급)", "A급", "양품"], required: true },
   qtyDefect: { headers: ["수량(C급)", "C급", "불량"], required: false },
 } satisfies ColumnMapping<
-  | "date" | "dept" | "shift" | "machine" | "productCode" | "itemType" | "productName"
+  | "date" | "dept" | "shift" | "machine" | "workOrderNo" | "productCode" | "itemType" | "productName"
   | "packUnit" | "slipType" | "unitsPerBox" | "qtyGood" | "qtyDefect"
 >;
 

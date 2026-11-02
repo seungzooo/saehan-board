@@ -83,6 +83,7 @@ model StockAdjustment {
 }
 
 /// ERP 생산실적. 전표구분 32(재가공투입)는 생산이 아니므로 집계 시 제외
+/// 중복 키: (date, productCode, workOrderNo, shift, machine, slipType) — 재업로드 시 같은 행은 건너뜀
 model ProductionHistory {
   id          Int      @id @default(autoincrement())
   productCode String
@@ -91,6 +92,7 @@ model ProductionHistory {
   dept        String? // 생산부서 (1211 PET 1팀 …)
   shift       String? // 작업조 A/B/C
   machine     String? // 생산호기
+  workOrderNo String? // 작업지시번호
   slipType    String // 전표구분 코드: 21 본가공입고 / 22 재가공입고 / 32 재가공투입
   unitsPerBox Int?
   qtyGood     Int // 수량(A급)
@@ -100,12 +102,14 @@ model ProductionHistory {
   product Product      @relation(fields: [productCode], references: [code])
   batch   UploadBatch? @relation(fields: [batchId], references: [id])
 
+  @@unique([date, productCode, workOrderNo, shift, machine, slipType])
   @@index([productCode, date])
   @@index([date])
   @@index([yearMonth])
 }
 
 /// ERP 판매(출고)실적. 반품은 qty가 음수
+/// 중복 키: (date, productCode, slipNo) — 재업로드 시 같은 행은 건너뜀
 model ShipmentHistory {
   id           Int      @id @default(autoincrement())
   productCode  String
@@ -123,6 +127,7 @@ model ShipmentHistory {
   customer Customer     @relation(fields: [customerCode], references: [code])
   batch    UploadBatch? @relation(fields: [batchId], references: [id])
 
+  @@unique([date, productCode, slipNo])
   @@index([productCode, date])
   @@index([customerCode, date])
   @@index([date])

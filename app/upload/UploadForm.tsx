@@ -8,8 +8,8 @@ import { uploadAction } from "./actions";
 
 const TABS: { kind: UploadKind; label: string; hint: string }[] = [
   { kind: "STOCK", label: "재고", hint: "ERP 재고 엑셀. 필수 컬럼: 품번, 재고수량 (박스 단위). 품명/규격은 선택. 컬럼명에 괄호·단위가 붙어도 됩니다 — 예: 재고수량(박스), 품 번" },
-  { kind: "PRODUCTION", label: "생산실적", hint: "팀별 파일(1211·1212·1219)을 각각 올리세요" },
-  { kind: "SALES", label: "출고실적", hint: "연도별 판매실적 파일" },
+  { kind: "PRODUCTION", label: "생산실적", hint: "팀별 파일(1211·1212·1219)을 각각 올리세요. 이미 있는 행(같은 생산일자·품번·작업지시번호·조·호기·전표구분)은 건너뜁니다." },
+  { kind: "SALES", label: "출고실적", hint: "연도별 판매실적 파일. 이미 있는 행(같은 출고일자·품번·전표번호)은 건너뜁니다." },
   { kind: "PRODUCT", label: "제품 마스터", hint: "품번 / 품명/규격 / 포장단위수량 / 가로·세로·높이(mm)" },
   { kind: "CUSTOMER", label: "거래처", hint: "거래선 / 구분(B2B·B2C) / 주문단위(차량·박스)" },
 ];
@@ -101,6 +101,10 @@ function ResultCard({ r }: { r: UploadResponse }) {
               기간: {x.period.from} ~ {x.period.to}
             </li>
           )}
+          {x.duplicates !== undefined && x.duplicates > 0 && (
+            <li>이미 있던 행 {x.duplicates.toLocaleString()} 건너뜀 (새로 저장된 행 {x.inserted.toLocaleString()})</li>
+          )}
+          {x.updated !== undefined && x.updated > 0 && <li>기존 {x.updated.toLocaleString()}건 갱신</li>}
           {x.newProducts > 0 && <li>신규 품목 {x.newProducts}개 생성</li>}
           {x.newCustomers > 0 && <li>신규 거래처 {x.newCustomers}곳 생성</li>}
           {x.skipped > 0 && <li>건너뛴 행 {x.skipped}</li>}

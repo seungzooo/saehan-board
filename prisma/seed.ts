@@ -4,6 +4,7 @@
  *
  * 1. sales_2021_2025.csv      → ShipmentHistory + Product + Customer
  * 2. production_2021_2025.csv → ProductionHistory (+ Product.isProduced)
+ *    두 실적 모두 중복 키(@@unique)가 같은 행은 건너뛰므로 seed를 여러 번 실행해도 안전하다.
  * 3. MonthlyStat 재계산
  * 4. 개발용 기초재고: 교집합(isProduced) 품번에 대해 최근 30일 출고 박스 × 1.5
  *    (재고 엑셀 샘플을 받으면 F1 업로드로 교체)
