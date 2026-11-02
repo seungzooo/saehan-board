@@ -1,5 +1,5 @@
 // 출고/재고보드 데이터 모델 — CLAUDE.md "데이터 모델" 섹션 기준
-// 개발: SQLite, 배포: datasource provider만 postgresql로 교체
+// PostgreSQL (Supabase). 런타임은 DATABASE_URL(트랜잭션 풀러), 마이그레이션은 DIRECT_URL(세션 풀러)
 
 generator client {
   provider = "prisma-client"
@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 /// 제품 마스터. 판매실적 엑셀에서 distinct로 생성, 제품 마스터 엑셀로 갱신

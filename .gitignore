@@ -47,3 +47,6 @@ next-env.d.ts
 
 # ERP 추출 실데이터 (사내 자료, 저장소에 올리지 않음)
 /docs/data
+
+.vercel
+.env*
