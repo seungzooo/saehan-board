@@ -24,8 +24,12 @@ type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: D
 function makeFakeDb(productNames: Record<string, string>) {
   const state = { batches: [] as Batch[], snapshots: [] as Snap[] };
   let seq = 0;
+  // 같은 밀리초에 업로드돼도 결정적으로: 시각이 같으면 나중에 넣은 배치가 최신
   const latest = (s: typeof state) =>
-    [...s.batches].filter((b) => b.kind === "STOCK" && !b.revertedAt).sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime())[0] ?? null;
+    s.batches
+      .map((b, i) => ({ b, i }))
+      .filter(({ b }) => b.kind === "STOCK" && !b.revertedAt)
+      .sort((x, y) => y.b.uploadedAt.getTime() - x.b.uploadedAt.getTime() || y.i - x.i)[0]?.b ?? null;
   const client = (s: typeof state) => ({
     uploadBatch: {
       findUnique: async ({ where }: { where: { fileHash: string } }) => s.batches.find((b) => b.fileHash === where.fileHash) ?? null,
