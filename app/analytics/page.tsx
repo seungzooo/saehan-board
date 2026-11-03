@@ -1,12 +1,23 @@
-import { ChartHead, LagChart, SeasonChart, TotalChart, TrendChart } from "@/components/charts";
-import { describeLag, describeNow, describeSeason, describeTrend, PEAK_INDEX } from "@/lib/analytics/seasonal";
+import { ChartHead, LagChart, ReturnsChart, SeasonChart, TotalChart, TrendChart } from "@/components/charts";
+import YearHeatmap from "@/components/YearHeatmap";
+import {
+  describeLagCalendar,
+  describeNow,
+  describeSeason,
+  describeTrend,
+  describeYearly,
+  PEAK_INDEX,
+  type LagRow,
+} from "@/lib/analytics/seasonal";
 import {
   getAnalysisBasis,
   getOverview,
   getProductAnalysis,
+  MAX_LAG,
   searchAnalysisProducts,
   SEGMENT_LABEL,
   TREND_MONTHS,
+  type AnalysisBasis,
   type Segment,
 } from "@/lib/analytics/query";
 import { availableText, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
@@ -16,8 +27,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * F5 분석 — 이사님 문제 ①: 생산·판매 상관관계, 시기별·계절별 패턴.
- * 품목 선택 → 월별 생산·출고, 계절지수, 시차 상관 + 현재 재고·소진일수와 지금 시기 해석.
- * 선택 없음 → 전체 월별 출고 + 계절지수 상위 10 품목.
+ * 판매 = 정상 출고(판매형태 전체), 반품은 따로. 재고 관리용 내수 필터는 쓰지 않는다.
  */
 export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ code?: string; q?: string; seg?: string }> }) {
   const sp = await searchParams;
@@ -42,9 +52,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
             </Link>
           )}
         </div>
-        <p className="num text-xs text-zinc-500">
-          실적 기준: 출고 {basis.shipmentTo ?? "없음"} · 생산 {basis.productionTo ?? "없음"} · 실적 업로드 때마다 월별 집계 재계산
-        </p>
+        <BasisNote basis={basis} />
 
         <form action="/analytics" className="flex gap-2">
           {seg !== "ALL" && <input type="hidden" name="seg" value={seg} />}
@@ -62,7 +70,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           </button>
         </form>
 
-        <nav className="flex gap-1 text-sm" aria-label="거래선 구분">
+        <nav className="flex flex-wrap gap-1 text-sm" aria-label="거래선 구분">
           {(["ALL", "B2B", "B2C"] as const).map((s) => (
             <Link
               key={s}
@@ -72,12 +80,58 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
               {SEGMENT_LABEL[s]}
             </Link>
           ))}
-          <span className="ml-1 self-center text-xs text-zinc-500">거래처 마스터 구분 기준 출고</span>
+          <span className="ml-1 self-center text-xs text-zinc-500">거래처 마스터 구분 기준 정상 출고</span>
         </nav>
       </header>
 
       {q && !sp.code ? <SearchResults q={q} link={link} /> : sp.code ? <ProductView code={sp.code} seg={seg} /> : <Overview seg={seg} link={link} />}
     </main>
+  );
+}
+
+function BasisNote({ basis }: { basis: AnalysisBasis }) {
+  return (
+    <p className="num text-xs text-zinc-500" data-testid="analysis-basis">
+      실적 기준: 정상 출고 {basis.shipmentTo ?? "없음"} · 생산 {basis.productionTo ?? "없음"} · 자료 범위 출고{" "}
+      {basis.salesCoverage ? `${basis.salesCoverage.from}~${basis.salesCoverage.to}` : "없음"} / 생산{" "}
+      {basis.productionCoverage ? `${basis.productionCoverage.from}~${basis.productionCoverage.to}` : "없음"}. 판매 = 정상 출고(판매형태 전체), 반품 별도. 실적
+      업로드 때마다 월별 집계 재계산.
+    </p>
+  );
+}
+
+function LagTable({ rows, best }: { rows: LagRow[]; best: number | null }) {
+  return (
+    <table className="num mt-1 w-full table-fixed text-center text-xs" data-testid="lag-table">
+      <thead className="text-zinc-500">
+        <tr>
+          <th className="py-1 text-left font-medium">k</th>
+          {rows.map((r) => (
+            <th key={r.lag} className={`py-1 font-medium ${r.lag === best ? "text-blue-800" : ""}`}>
+              +{r.lag}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td className="py-1 text-left text-zinc-500">r</td>
+          {rows.map((r) => (
+            <td key={r.lag} className={r.lag === best ? "font-bold text-blue-800" : ""}>
+              {r.r === null ? "—" : r.r.toFixed(2)}
+            </td>
+          ))}
+        </tr>
+        <tr>
+          <td className="py-1 text-left text-zinc-500">쌍</td>
+          {rows.map((r) => (
+            <td key={r.lag} className="text-zinc-600">
+              {r.n}
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
   );
 }
 
@@ -112,9 +166,9 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
         ? "품목을 찾을 수 없습니다."
         : a.reason === "NO_PRODUCTION"
           ? "생산 실적이 없는 품목(사입품 등)이라 생산·판매 상관분석 대상이 아닙니다."
-          : "정상·내수 출고 실적이 없어 분석할 수 없습니다.";
+          : "정상 출고 실적이 없어 분석할 수 없습니다.";
     return (
-      <div className="rounded-lg border border-dashed border-zinc-400 p-4 text-sm">
+      <div className="rounded-lg border border-dashed border-zinc-400 p-4 text-sm" data-testid="not-analyzable">
         <p className="font-semibold">분석 불가{a.product && ` — ${a.product.name}`}</p>
         <p className="mt-1 text-zinc-600">{why} 분석 대상은 생산·판매 양쪽에 실적이 있는 품번뿐입니다.</p>
         {a.product && (
@@ -128,7 +182,9 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
   const st = stockStatus(a.stock, a.days);
   const nowRow = a.seasonal[a.currentMonth - 1];
   const peaks = a.seasonal.filter((r) => (r.index ?? 0) >= PEAK_INDEX).map((r) => r.month);
-  const segNote = seg === "ALL" ? "" : ` · ${SEGMENT_LABEL[seg]} 거래처 출고`;
+  const segNote = seg === "ALL" ? "" : ` · ${SEGMENT_LABEL[seg]} 거래처`;
+  const range = a.seasonRange ? `${a.seasonRange.from}~${a.seasonRange.to}` : "자료 없음";
+  const returnRate = a.normalTotal > 0 ? (a.returnsTotal / a.normalTotal) * 100 : null;
 
   return (
     <>
@@ -154,19 +210,28 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
           </div>
         </div>
         <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium">{describeNow(nowRow.index, a.currentMonth, a.days.days)}</p>
+        <p className="mt-1 text-xs text-zinc-500">재고·소진일수는 재고 관리 기준(정상·내수), 아래 분석은 정상 출고 전체 기준입니다.</p>
       </section>
 
-      {/* 월별 생산·출고 */}
+      {/* 월별 생산·판매 + 반품 */}
       <section>
-        <ChartHead title={`최근 ${TREND_MONTHS}개월 월별 생산·출고`} unit="박스" basis={`실적 ${a.trend.at(-1)?.yearMonth}까지${segNote}`} />
+        <ChartHead title={`최근 ${TREND_MONTHS}개월 월별 생산·판매`} unit="박스" basis={`${a.trend[0]?.yearMonth}~${a.trend.at(-1)?.yearMonth}${segNote}`} />
         <TrendChart data={a.trend} />
         <p className="text-sm text-zinc-700">{describeTrend(a.trend.map((t) => t.shipment))}</p>
-        <p className="text-xs text-zinc-500">생산 = 본가공입고 + 재가공입고 (재가공투입 제외), 박스 환산. 출고 = 정상·내수만.</p>
+        <p className="text-xs text-zinc-500">생산 = A급, 본가공입고 + 재가공입고 (재가공투입 제외). 판매 = 정상 출고. 둘 다 행마다 포장단위수량으로 나눈 박스 환산.</p>
+        <div className="mt-2" data-testid="returns">
+          <ChartHead title="월별 반품 (판매와 별도)" unit="박스" basis={`${TREND_MONTHS}개월`} />
+          <ReturnsChart data={a.trend} />
+          <p className="num text-sm text-zinc-700">
+            {TREND_MONTHS}개월 반품 {Math.round(a.returnsTotal).toLocaleString()}박스
+            {returnRate !== null && ` — 정상 판매 ${Math.round(a.normalTotal).toLocaleString()}박스의 ${returnRate.toFixed(1)}%`}
+          </p>
+        </div>
       </section>
 
-      {/* 계절지수 */}
+      {/* 5년 평균 계절지수 */}
       <section>
-        <ChartHead title="계절지수 (월 평균 출고 ÷ 연평균 월 출고)" unit="지수 (1.0 = 평균)" basis={`${a.seasonRange.from.slice(0, 4)}~${a.seasonRange.to.slice(0, 4)}${segNote}`} />
+        <ChartHead title="계절지수 — 5년 평균 (월 평균 판매 ÷ 전체 월평균)" unit="지수 (1.0 = 평균)" basis={`${range}${segNote}`} />
         <SeasonChart rows={a.seasonal} peak={PEAK_INDEX} />
         <p className="text-sm text-zinc-700">{describeSeason(a.seasonal)}</p>
         <table className="num mt-2 w-full overflow-hidden rounded-lg border border-zinc-200 text-sm">
@@ -174,7 +239,7 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
             <tr>
               <th className="px-3 py-2 text-left font-medium">월</th>
               <th className="px-3 py-2 text-right font-medium">지수</th>
-              <th className="px-3 py-2 text-right font-medium">평균 출고(박스)</th>
+              <th className="px-3 py-2 text-right font-medium">평균 판매(박스)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200">
@@ -197,12 +262,27 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
         </table>
       </section>
 
+      {/* 연도별 계절지수 히트맵 */}
+      <section data-testid="year-heatmap">
+        <ChartHead title="연도별 계절지수 (해당 월 판매 ÷ 그 해 월평균)" unit="지수 (기준 1)" basis={`${range}${segNote}`} />
+        <YearHeatmap rows={a.yearly} />
+        <p className="mt-1 text-sm text-zinc-700">{describeYearly(a.yearly)}</p>
+        <p className="text-xs text-zinc-500">
+          그 해 월평균은 자료 범위 안의 달만으로 냅니다(부분 연도는 12로 나누지 않음). 범위 안의 빈 달은 실제 0, 범위 밖은 자료 없음. 그 해 판매가 0이면 지수를 내지
+          않습니다.
+        </p>
+      </section>
+
       {/* 시차 상관 */}
       <section>
-        <ChartHead title="생산 → 출고 시차 상관" unit="상관계수 r (−1~1)" basis={`${a.seasonRange.from.slice(0, 4)}~${a.seasonRange.to.slice(0, 4)} 월별${segNote}`} />
+        <ChartHead title={`생산 → 판매 시차 상관 (k = 0~${MAX_LAG})`} unit="상관계수 r (−1~1)" basis={`월별${segNote}`} />
+        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k 의 상관 — k개월 뒤 판매가 생산을 따라가는지</p>
         <LagChart rows={a.lags} best={a.best?.lag ?? null} />
-        <p className="text-sm font-medium text-zinc-800">{describeLag(a.best)}</p>
-        <p className="text-xs text-zinc-500">n개월 = 이번 달 생산과 n개월 뒤 출고의 상관. 1에 가까울수록 생산 증감이 그만큼 뒤 출고 증감과 함께 움직입니다.</p>
+        <LagTable rows={a.lags} best={a.best?.lag ?? null} />
+        <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(a.best)}</p>
+        <p className="text-xs text-zinc-500">
+          쌍 = 생산월과 판매월이 모두 자료 범위 안인 달의 수. 쌍이 3개 미만이거나 변동이 없으면 —(산정 불가).
+        </p>
       </section>
     </>
   );
@@ -210,23 +290,38 @@ async function ProductView({ code, seg }: { code: string; seg: Segment }) {
 
 async function Overview({ seg, link }: { seg: Segment; link: (p: Record<string, string | undefined>) => string }) {
   const o = await getOverview(seg);
-  const segNote = seg === "ALL" ? "" : ` · ${SEGMENT_LABEL[seg]} 거래처 출고`;
+  const segNote = seg === "ALL" ? "" : ` · ${SEGMENT_LABEL[seg]} 거래처`;
+  const range = o.seasonRange ? `${o.seasonRange.from}~${o.seasonRange.to}` : "자료 없음";
+  const returnRate = o.normalTotal > 0 ? (o.returnsTotal / o.normalTotal) * 100 : null;
   return (
     <>
       <section>
-        <ChartHead
-          title="전체 월별 출고 추이"
-          unit="박스"
-          basis={`${o.seasonRange.from.slice(0, 4)}~${o.seasonRange.to.slice(0, 4)} · 생산·판매 교집합 ${o.intersection.toLocaleString()}품번${segNote}`}
-        />
+        <ChartHead title="전체 월별 판매 추이 (정상 출고)" unit="박스" basis={`${range} · 생산·판매 교집합 ${o.intersection.toLocaleString()}품번${segNote}`} />
         <TotalChart data={o.totalSeries} />
         <p className="text-sm text-zinc-700">
           {describeSeason(o.totalSeasonal)} · {describeTrend(o.totalSeries.map((t) => t.shipment))}
         </p>
+        <p className="num text-sm text-zinc-700" data-testid="returns">
+          같은 기간 반품 {o.returnsTotal.toLocaleString()}박스{returnRate !== null && ` — 정상 판매의 ${returnRate.toFixed(1)}%`}
+        </p>
+      </section>
+
+      <section data-testid="year-heatmap">
+        <ChartHead title="연도별 계절지수 — 교집합 전체" unit="지수 (기준 1)" basis={`${range}${segNote}`} />
+        <YearHeatmap rows={o.totalYearly} />
+        <p className="mt-1 text-sm text-zinc-700">{describeYearly(o.totalYearly)}</p>
       </section>
 
       <section>
-        <ChartHead title="계절지수 상위 10 품목 (성수기 편차 큰 순)" unit="지수 · 박스" basis={`5년 중 출고 ${24}개월 이상인 ${o.eligible.toLocaleString()}품목 중`} />
+        <ChartHead title={`생산 → 판매 시차 상관 — 교집합 전체 (k = 0~${MAX_LAG})`} unit="상관계수 r" basis={`월별 합계${segNote}`} />
+        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k</p>
+        <LagChart rows={o.totalLags} best={o.totalBest?.lag ?? null} />
+        <LagTable rows={o.totalLags} best={o.totalBest?.lag ?? null} />
+        <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(o.totalBest)}</p>
+      </section>
+
+      <section>
+        <ChartHead title="계절지수 상위 10 품목 (성수기 편차 큰 순)" unit="지수 · 박스" basis={`5년 중 판매 24개월 이상인 ${o.eligible.toLocaleString()}품목 중`} />
         {o.top.length === 0 ? (
           <p className="rounded-lg border border-zinc-200 p-3 text-sm text-zinc-500">조건을 만족하는 품목이 없습니다.</p>
         ) : (
@@ -279,9 +374,11 @@ async function Overview({ seg, link }: { seg: Segment; link: (p: Record<string, 
             </table>
           </div>
         )}
-        <p className="mt-1 text-sm text-zinc-700">
-          {o.top[0] ? `${o.top[0].name}은(는) ${o.top[0].peakMonth}월 출고가 평균의 ${o.top[0].peakIndex.toFixed(1)}배 — 성수기 전에 재고를 확인하세요.` : ""}
-        </p>
+        {o.top[0] && (
+          <p className="mt-1 text-sm text-zinc-700">
+            {o.top[0].name}은(는) {o.top[0].peakMonth}월 판매가 평균의 {o.top[0].peakIndex.toFixed(1)}배 — 성수기 전에 재고를 확인하세요.
+          </p>
+        )}
       </section>
     </>
   );

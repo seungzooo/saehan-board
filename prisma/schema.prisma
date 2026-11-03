@@ -186,6 +186,11 @@ model MonthlyStat {
   qtyShippedBox Float  @default(0) // 정상·내수만, 박스
   qtyShippedB2B Float  @default(0)
   qtyShippedB2C Float  @default(0)
+  // 분석(F5)용: 판매형태 필터 없이 출고구분만 — 재고 관리용 내수 필터를 분석에 자동 적용하지 않는다
+  qtyNormalBox    Float @default(0) // 정상 출고 (판매형태 전체), 박스 환산
+  qtyNormalB2B    Float @default(0)
+  qtyNormalB2C    Float @default(0)
+  qtyReturnBox    Float @default(0) // 반품 (양수로 저장), 박스 환산
 
   product Product @relation(fields: [productCode], references: [code])
 

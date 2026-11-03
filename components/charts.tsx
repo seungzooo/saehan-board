@@ -73,8 +73,8 @@ export function TrendChart({ data }: { data: { yearMonth: string; production: nu
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="yearMonth" tick={{ fontSize: 11, fill: AXIS }} tickFormatter={(v: string) => v.slice(2)} interval="preserveStartEnd" minTickGap={16} />
           <YAxis tick={{ fontSize: 11, fill: AXIS }} width={48} tickFormatter={(v: number) => nf(v)} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [`${nf(Number(v))} 박스`, name === "production" ? "생산" : "출고"]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v) => (v === "production" ? "생산 (본가공+재가공입고)" : "출고 (정상·내수)")} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [`${nf(Number(v))} 박스`, name === "production" ? "생산" : "판매(정상)"]} />
+          <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v) => (v === "production" ? "생산 (본가공+재가공입고)" : "판매 (정상 출고)")} />
           <Line type="monotone" dataKey="production" stroke={COLOR_PRODUCTION} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
           <Line type="monotone" dataKey="shipment" stroke={COLOR_SHIPMENT} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
         </LineChart>
@@ -125,24 +125,48 @@ function PeakLabel(props: { x?: number | string; y?: number | string; width?: nu
   );
 }
 
-/** 생산→출고 시차 상관 0~3개월, 최고 막대 강조 + 계수 */
-export function LagChart({ rows, best }: { rows: { lag: number; r: number | null }[]; best: number | null }) {
-  const data = rows.map((r) => ({ lag: `${r.lag}개월`, r: r.r === null ? 0 : Math.round(r.r * 100) / 100, isBest: r.lag === best, hasValue: r.r !== null }));
+/** 생산월 t ↔ 출고월 t+k 시차 상관 (k = 0..6), 최고 막대 강조 + 계수. 툴팁에 유효 월 쌍 수 */
+export function LagChart({ rows, best }: { rows: { lag: number; r: number | null; n: number }[]; best: number | null }) {
+  const data = rows.map((r) => ({ lag: `+${r.lag}`, r: r.r === null ? 0 : Math.round(r.r * 100) / 100, n: r.n, isBest: r.lag === best, hasValue: r.r !== null }));
   return (
     <div className="h-48 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 18, right: 4, bottom: 0, left: 0 }} barCategoryGap="25%">
+        <BarChart data={data} margin={{ top: 18, right: 4, bottom: 0, left: 0 }} barCategoryGap="20%">
           <CartesianGrid stroke={GRID} vertical={false} />
-          <XAxis dataKey="lag" tick={{ fontSize: 11, fill: AXIS }} />
+          <XAxis dataKey="lag" tick={{ fontSize: 11, fill: AXIS }} label={{ value: "k (개월 뒤 출고)", position: "insideBottomRight", offset: -2, fontSize: 10, fill: AXIS }} />
           <YAxis tick={{ fontSize: 11, fill: AXIS }} width={32} domain={[(min: number) => Math.min(0, Math.floor(min * 10) / 10), 1]} />
-          <Tooltip cursor={{ fill: "#f4f4f5" }} contentStyle={tooltipStyle} formatter={(v) => [`r = ${Number(v).toFixed(2)}`, "상관계수"]} />
+          <Tooltip
+            cursor={{ fill: "#f4f4f5" }}
+            contentStyle={tooltipStyle}
+            labelFormatter={(l) => `생산월 t ↔ 출고월 t${String(l)}`}
+            formatter={(v, _n, item) => {
+              const p = (item as { payload?: { n: number; hasValue: boolean } }).payload;
+              return [p?.hasValue ? `r = ${Number(v).toFixed(2)} · 유효 ${p.n}쌍` : `산정 불가 · 유효 ${p?.n ?? 0}쌍`, "상관계수"];
+            }}
+          />
           <ReferenceLine y={0} stroke={AXIS} />
           <Bar dataKey="r" radius={[4, 4, 0, 0]} isAnimationActive={false}>
             {data.map((d) => (
               <Cell key={d.lag} fill={d.isBest ? COLOR_PRODUCTION : COLOR_MUTED_BAR} />
             ))}
-            <LabelList dataKey="r" position="top" fontSize={11} fill="#18181b" formatter={(v) => Number(v).toFixed(2)} />
+            <LabelList dataKey="r" position="top" fontSize={10} fill="#18181b" formatter={(v) => Number(v).toFixed(2)} />
           </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** 월별 반품 (정상 판매와 따로) — 단일 계열, 회색 */
+export function ReturnsChart({ data }: { data: { yearMonth: string; returns: number }[] }) {
+  return (
+    <div className="h-24 w-full" aria-label="월별 반품 막대그래프">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap={2}>
+          <XAxis dataKey="yearMonth" tick={{ fontSize: 10, fill: AXIS }} tickFormatter={(v: string) => v.slice(2)} interval="preserveStartEnd" minTickGap={24} />
+          <YAxis tick={{ fontSize: 10, fill: AXIS }} width={40} tickFormatter={(v: number) => nf(v)} />
+          <Tooltip cursor={{ fill: "#f4f4f5" }} contentStyle={tooltipStyle} formatter={(v) => [`${nf(Number(v))} 박스`, "반품"]} />
+          <Bar dataKey="returns" fill="#71717a" radius={[2, 2, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>

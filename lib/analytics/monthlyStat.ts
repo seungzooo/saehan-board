@@ -12,6 +12,10 @@ type Stat = {
   qtyShippedBox: number;
   qtyShippedB2B: number;
   qtyShippedB2C: number;
+  qtyNormalBox: number;
+  qtyNormalB2B: number;
+  qtyNormalB2C: number;
+  qtyReturnBox: number;
 };
 
 export async function rebuildMonthlyStat(db: PrismaClient): Promise<number> {
@@ -20,7 +24,7 @@ export async function rebuildMonthlyStat(db: PrismaClient): Promise<number> {
     const k = `${productCode}\u0000${yearMonth}`;
     let s = stats.get(k);
     if (!s) {
-      s = { qtyProduced: 0, qtyProducedBox: 0, qtyProdDefect: 0, qtyShippedBox: 0, qtyShippedB2B: 0, qtyShippedB2C: 0 };
+      s = { qtyProduced: 0, qtyProducedBox: 0, qtyProdDefect: 0, qtyShippedBox: 0, qtyShippedB2B: 0, qtyShippedB2C: 0, qtyNormalBox: 0, qtyNormalB2B: 0, qtyNormalB2C: 0, qtyReturnBox: 0 };
       stats.set(k, s);
     }
     return s;
@@ -43,15 +47,26 @@ export async function rebuildMonthlyStat(db: PrismaClient): Promise<number> {
 
   const customers = await db.customer.findMany({ select: { code: true, type: true } });
   const typeOf = new Map(customers.map((c) => [c.code, c.type]));
+  // 정상·내수 (재고 관리 기준)과 정상·반품 (분석 기준)을 한 번에
   const ship = await db.shipmentHistory.findMany({
-    where: { shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE },
-    select: { productCode: true, yearMonth: true, qtyBox: true, customerCode: true },
+    where: { shipType: { in: [ANALYSIS_SHIP_TYPE, "반품"] } },
+    select: { productCode: true, yearMonth: true, qtyBox: true, customerCode: true, shipType: true, salesType: true },
   });
   for (const r of ship) {
     const s = get(r.productCode, r.yearMonth);
-    s.qtyShippedBox += r.qtyBox;
-    if (typeOf.get(r.customerCode) === "B2B") s.qtyShippedB2B += r.qtyBox;
-    else s.qtyShippedB2C += r.qtyBox;
+    const b2b = typeOf.get(r.customerCode) === "B2B";
+    if (r.shipType === "반품") {
+      s.qtyReturnBox += Math.abs(r.qtyBox);
+      continue;
+    }
+    s.qtyNormalBox += r.qtyBox;
+    if (b2b) s.qtyNormalB2B += r.qtyBox;
+    else s.qtyNormalB2C += r.qtyBox;
+    if (r.salesType === ANALYSIS_SALES_TYPE) {
+      s.qtyShippedBox += r.qtyBox;
+      if (b2b) s.qtyShippedB2B += r.qtyBox;
+      else s.qtyShippedB2C += r.qtyBox;
+    }
   }
 
   const data = [...stats.entries()].map(([k, s]) => {

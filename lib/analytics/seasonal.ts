@@ -162,3 +162,106 @@ function groupConsecutive(months: number[]): number[][] {
   }
   return groups;
 }
+
+// ───────────────────────── 결측월 처리 · 달력 기준 시차 · 연도별 계절지수 ─────────────────────────
+//
+// 결측월 규칙
+//  - 자료 범위(coverage) = 그 실적(생산 또는 출고) 전체 데이터의 첫 달 ~ 마지막 달.
+//  - 범위 안인데 그 품목 행이 없는 달 = 실제 0 (ERP 추출은 그 기간 전 품목을 담고 있으므로).
+//  - 범위 밖의 달 = 자료 없음(null). 계산에서 제외하고 화면에 "자료 없음"으로 구분한다.
+
+export type Coverage = { from: string; to: string } | null;
+
+/** 달력 순서 months에 대해: 범위 안이면 값(없으면 0), 범위 밖이면 null */
+export function coveredSeries(months: string[], values: Map<string, number>, coverage: Coverage): (number | null)[] {
+  return months.map((ym) => (coverage && ym >= coverage.from && ym <= coverage.to ? (values.get(ym) ?? 0) : null));
+}
+
+/**
+ * 생산월 t 와 출고월 t+k 의 상관, k = 0..maxLag (달력 기준).
+ * 쌍은 생산[t]와 출고[t+k]가 둘 다 자료 범위 안일 때만 센다 — n = 유효 월 쌍 수.
+ * 쌍이 3개 미만이거나 한쪽 분산이 0이면 r = null (0으로 바꾸지 않는다).
+ */
+export function lagCorrelationsCalendar(production: (number | null)[], shipment: (number | null)[], maxLag = 6): LagRow[] {
+  const rows: LagRow[] = [];
+  for (let lag = 0; lag <= maxLag; lag++) {
+    const x: number[] = [];
+    const y: number[] = [];
+    for (let t = 0; t + lag < Math.min(production.length, shipment.length); t++) {
+      const p = production[t];
+      const s = shipment[t + lag];
+      if (p === null || s === null) continue;
+      x.push(p);
+      y.push(s);
+    }
+    rows.push({ lag, r: pearson(x, y), n: x.length });
+  }
+  return rows;
+}
+
+export type YearCell = { month: number; value: number | null; index: number | null };
+export type YearRow = {
+  year: number;
+  /** 자료 범위 안의 달 수 (12 미만이면 부분 연도) */
+  covered: number;
+  /** 해당 연도 월평균 정상 출고 = 범위 안 달들의 평균. 범위 안 달이 없으면 null */
+  mean: number | null;
+  /** ok | zero(연 출고 0 → 지수 산정 불가) | nodata(그 해 자료 없음) */
+  status: "ok" | "zero" | "nodata";
+  cells: YearCell[];
+};
+
+/**
+ * 연도별 계절지수: 해당 월 정상 출고량 ÷ 해당 연도 월평균 정상 출고량 (기준값 1).
+ * 월평균은 그 해 자료 범위 안의 달만으로 낸다 (부분 연도면 12로 나누지 않는다).
+ * 자료 없음(null) 달은 index = null. 연 출고 0이면 모든 달 index = null (status=zero).
+ */
+export function yearlySeasonal(months: string[], values: (number | null)[]): YearRow[] {
+  const byYear = new Map<number, YearCell[]>();
+  months.forEach((ym, i) => {
+    const y = Number(ym.slice(0, 4));
+    const m = Number(ym.slice(5, 7));
+    if (!byYear.has(y)) byYear.set(y, Array.from({ length: 12 }, (_, k) => ({ month: k + 1, value: null, index: null })));
+    byYear.get(y)![m - 1].value = values[i];
+  });
+  return [...byYear.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([year, cells]) => {
+      const known = cells.filter((c) => c.value !== null);
+      if (known.length === 0) return { year, covered: 0, mean: null, status: "nodata" as const, cells };
+      const mean = known.reduce((s, c) => s + (c.value as number), 0) / known.length;
+      if (mean === 0) return { year, covered: known.length, mean, status: "zero" as const, cells };
+      return {
+        year,
+        covered: known.length,
+        mean,
+        status: "ok" as const,
+        cells: cells.map((c) => ({ ...c, index: c.value === null ? null : c.value / mean })),
+      };
+    });
+}
+
+/** "생산월 t → 출고월 t+2 상관이 가장 높음 (r=0.71, 유효 57쌍)" */
+export function describeLagCalendar(best: LagRow | null): string {
+  if (!best || best.r === null) return "생산·출고 상관을 산정할 수 없습니다 (유효 월 쌍이 3개 미만이거나 변동이 없음).";
+  const strength = best.r >= 0.7 ? "강함" : best.r >= 0.4 ? "보통" : best.r >= 0.2 ? "약함" : "거의 없음";
+  const when = best.lag === 0 ? "생산한 달에 바로 출고되는 경향" : `생산 후 ${best.lag}개월 뒤 출고 경향`;
+  return `${when} — 생산월 t ↔ 출고월 t+${best.lag} (r=${best.r.toFixed(2)}, 상관 ${strength}, 유효 ${best.n}쌍)`;
+}
+
+/** 연도별 지수 한 줄: 해마다 반복되는 성수기 달이 있는지 */
+export function describeYearly(rows: YearRow[], peak = PEAK_INDEX): string {
+  const valid = rows.filter((r) => r.status === "ok");
+  if (valid.length === 0) return "연도별 지수를 낼 수 있는 해가 없습니다 (자료 없음 또는 연 출고 0).";
+  let bestMonth = 0;
+  let bestCount = 0;
+  for (let m = 1; m <= 12; m++) {
+    const c = valid.filter((r) => (r.cells[m - 1].index ?? 0) >= peak).length;
+    if (c > bestCount) {
+      bestCount = c;
+      bestMonth = m;
+    }
+  }
+  if (bestCount <= 1) return `${valid.length}개 해 중 같은 달이 두 번 이상 성수기(지수 ${peak} 이상)인 경우가 없음 — 해마다 성수기가 달라 계절 패턴이 일정하지 않습니다.`;
+  return `${bestMonth}월은 ${valid.length}개 해 중 ${bestCount}개 해에서 성수기(지수 ${peak} 이상) — 해마다 반복되는 패턴입니다.`;
+}
