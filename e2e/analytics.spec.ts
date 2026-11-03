@@ -41,7 +41,12 @@ test("연도 버튼: 제목·기간·월별 값·비교 수치가 함께 바뀐�
   const labels = (await ticks.allTextContents()).filter((t) => t.endsWith("월"));
   expect(labels).toEqual(Array.from({ length: 12 }, (_, i) => `${i + 1}월`)); // 가로축 1~12월 고정
   await expectNoOverlap(page.getByTestId("year-buttons").locator("a"), "연도 버튼");
-  await expectNoOverlap(page.locator('[data-testid="year-month-chart"] .recharts-xAxis .recharts-cartesian-axis-tick-value'), "가로축 라벨");
+  await expect(page.locator('[data-testid="year-month-chart"] .recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value')).toHaveCount(12);
+  await expectNoOverlap(page.locator('[data-testid="year-month-chart"] .recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value'), "가로축 라벨");
+  // 12월 라벨이 잘리지 않음: 라벨 오른쪽 끝이 차트 안
+  const chartBox = (await page.getByTestId("year-month-chart").boundingBox())!;
+  const lastTick = (await page.locator('[data-testid="year-month-chart"] .recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value').last().boundingBox())!;
+  expect(lastTick.x + lastTick.width, "12월 라벨이 차트 안").toBeLessThanOrEqual(chartBox.x + chartBox.width);
   await expectNoHorizontalScroll(page);
   const before = await page.getByTestId("compare-line-0").textContent();
 
@@ -67,6 +72,10 @@ test("연도 버튼: 제목·기간·월별 값·비교 수치가 함께 바뀐�
   await expect(page.getByTestId("compare-line-2")).toContainText("직전 12개월 대비");
   await expect(page.locator('[data-testid="all-period-chart"] .recharts-reference-line')).toHaveCount(5); // 2021~2025 1월 구분선
   await expect(page.getByTestId("all-period-chart")).toContainText("2023년");
+  // 연도 라벨과 세로축 눈금이 겹치지 않음
+  const labelsAndTicks = page.locator('[data-testid="all-period-chart"] :is(text.recharts-label, .recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value)');
+  expect(await labelsAndTicks.count(), "연도 라벨 5 + 세로축 눈금 + 단위").toBeGreaterThanOrEqual(10);
+  await expectNoOverlap(labelsAndTicks, "연도 라벨·세로축 눈금");
   await expectNoHorizontalScroll(page);
 });
 

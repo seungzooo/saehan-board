@@ -70,7 +70,12 @@ export default function ShipmentSection({
     if (last && ctx.lastYm && last < ctx.lastYm) periodLine += ` (집계 완료 ${last}까지)`;
     chart = <AllPeriodChart points={pts} boxSize={boxSize} unit={unit} />;
     comparison = compareRolling12(units.normal, ctx);
-    if (ctx.firstYm && last) returnsLine = `같은 기간 반품 ${formatUnits(sumBetween(units.returns, ctx.firstYm, last), boxSize)}`;
+    if (comparison.status !== "insufficient" || comparison.a)
+      returnsLine = comparison.a
+        ? `최근 12개월(${ymSpanLabel(comparison.a.from, comparison.a.to)}) 반품 ${formatUnits(sumBetween(units.returns, comparison.a.from, comparison.a.to), boxSize)} (판매와 별도 집계)`
+        : null;
+    if (!returnsLine && ctx.firstYm && last)
+      returnsLine = `전체 기간(${ymSpanLabel(ctx.firstYm, last)}) 반품 ${formatUnits(sumBetween(units.returns, ctx.firstYm, last), boxSize)} (판매와 별도 집계)`;
   } else {
     const pts = yearSeries(year, units.normal, ctx);
     const span = yearSpan(year, ctx);
@@ -83,7 +88,7 @@ export default function ShipmentSection({
     if (span) {
       const from = `${year}-${String(span.from).padStart(2, "0")}`;
       const to = `${year}-${String(span.to).padStart(2, "0")}`;
-      returnsLine = `같은 기간 반품 ${formatUnits(sumBetween(units.returns, from, to), boxSize)} (판매와 별도 집계)`;
+      returnsLine = `${monthSpanLabel(year, span.from, span.to)} 반품 ${formatUnits(sumBetween(units.returns, from, to), boxSize)} (판매와 별도 집계)`;
     }
   }
   const lines = describeComparison(comparison, boxSize);

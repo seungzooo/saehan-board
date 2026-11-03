@@ -226,9 +226,9 @@ export function YearMonthChart({ points, boxSize, unit }: { points: MonthPointVi
   return (
     <div className="h-60 w-full" data-testid="year-month-chart">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
-          <XAxis dataKey="label" interval={0} tick={{ fontSize: 10, fill: AXIS }} tickMargin={4} />
+          <XAxis dataKey="label" interval={0} tick={{ fontSize: 10, fill: AXIS }} tickMargin={4} padding={{ left: 6, right: 6 }} />
           <YAxis
             tick={{ fontSize: 10, fill: AXIS }}
             width={56}
@@ -259,14 +259,14 @@ export function AllPeriodChart({ points, boxSize, unit }: { points: MonthPointVi
   return (
     <div className="h-60 w-full" data-testid="all-period-chart">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 18, right: 8, bottom: 0, left: 0 }}>
+        <LineChart data={data} margin={{ top: 30, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="ym" tick={false} height={8} />
           <YAxis
             tick={{ fontSize: 10, fill: AXIS }}
             width={56}
             tickFormatter={(v: number) => (v >= 1_000_000 ? `${nf(v / 1_000_000)}백만` : v >= 10_000 ? `${nf(v / 10_000)}만` : nf(v))}
-            label={{ value: unit, position: "insideTopLeft", offset: 0, dy: -16, fontSize: 10, fill: AXIS }}
+            label={{ value: unit, position: "insideTopLeft", offset: 0, dy: -28, fontSize: 10, fill: AXIS }}
           />
           {yearStarts.map((ym) => (
             <ReferenceLine
@@ -274,7 +274,7 @@ export function AllPeriodChart({ points, boxSize, unit }: { points: MonthPointVi
               x={ym}
               stroke="#a1a1aa"
               strokeDasharray="3 3"
-              label={{ value: `${ym.slice(0, 4)}년`, position: "top", fontSize: 10, fill: "#52525b" }}
+              label={{ value: `${ym.slice(0, 4)}년`, position: "insideTopLeft", dy: -24, dx: 2, fontSize: 10, fill: "#52525b" }}
             />
           ))}
           <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={{ stroke: "#a1a1aa" }} />
