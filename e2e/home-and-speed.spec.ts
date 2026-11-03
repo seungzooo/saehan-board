@@ -79,8 +79,11 @@ test("분석 연도 버튼: 서버 요청 없이 즉시 바뀌고 주소(?year=)
   await page.goto("/analytics");
   await expect(page.getByTestId("shipment-title")).toHaveText("2025년 월별 출고량");
   const requests: string[] = [];
+  // 연도 전환이 서버를 부른다면 /analytics 문서나 RSC 요청이 생긴다. 링크 미리 불러오기(prefetch)는 다른 경로라 제외
   page.on("request", (r) => {
-    if (["document", "fetch", "xhr"].includes(r.resourceType())) requests.push(r.url());
+    const u = new URL(r.url());
+    const prefetch = r.headers()["next-router-prefetch"] !== undefined;
+    if (u.pathname === "/analytics" && !prefetch && ["document", "fetch", "xhr"].includes(r.resourceType())) requests.push(r.url());
   });
   for (const [name, title, year] of [
     ["2024년", "2024년 월별 출고량", "2024"],
