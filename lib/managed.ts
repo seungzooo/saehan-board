@@ -34,7 +34,8 @@ export type StockListRow = {
   stock: AvailableStock; // available null = 확인 필요, 0 = 0박스
   days: number | null; // 예상 소진일수, null = 산정 불가
   lastShipDate: string | null; // 최근 정상·내수 출고일 (전 기간)
-  recentQty: number; // 기준월 포함 최근 3개 달 정상·내수 출고량 (포장단위 수)
+  recentCount: number; // 기준월 포함 최근 3개 달 정상·내수 출고 건수(전표 수) — 미확인 정렬 기준
+  recentQty: number; // 같은 기간 출고량 (품목 단위: 박스·개 등) — 표시만, 정렬에 쓰지 않음 (단위가 품목마다 달라 비교 불가)
 };
 
 export type ListView = "all" | "checked" | "unchecked" | "low" | "dormant" | "dormantStock";
@@ -99,9 +100,9 @@ export function compareChecked(a: StockListRow, b: StockListRow): number {
   return byCode(a, b);
 }
 
-/** 미확인 목록: 최근 3개 달 출고량 내림차순 → 최근 출고일 내림차순 → 품번 오름차순 */
+/** 미확인 목록: 최근 3개 달 출고 건수(전표 수) ↓ → 최근 출고일 ↓ → 품번 ↑. 출고량은 단위가 섞여 정렬에 쓰지 않는다 */
 export function compareUnchecked(a: StockListRow, b: StockListRow): number {
-  if (a.recentQty !== b.recentQty) return b.recentQty - a.recentQty;
+  if (a.recentCount !== b.recentCount) return b.recentCount - a.recentCount;
   return desc(a.lastShipDate, b.lastShipDate) || byCode(a, b);
 }
 

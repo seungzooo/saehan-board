@@ -29,6 +29,7 @@ const row = (p: Partial<StockListRow> & { code: string }): StockListRow => ({
   stock: stock(10),
   days: 5,
   lastShipDate: "2025-12-01",
+  recentCount: 0,
   recentQty: 0,
   ...p,
 });
@@ -85,10 +86,16 @@ describe("정렬", () => {
     const rows = [row({ code: "A", days: null }), row({ code: "B", days: 7 }), row({ code: "C", days: 0 }), row({ code: "D", days: 2.5 })];
     expect(sortRows(rows, "checked").map((r) => r.code)).toEqual(["C", "D", "B", "A"]);
   });
-  it("미확인 목록: 3개월 출고량 ↓ → 최근 출고일 ↓ → 품번 ↑", () => {
-    const u = (code: string, recentQty: number, lastShipDate: string | null) => row({ code, recentQty, lastShipDate, stock: stock(null), days: null });
+  it("미확인 목록: 3개월 출고 건수 ↓ → 최근 출고일 ↓ → 품번 ↑", () => {
+    const u = (code: string, recentCount: number, lastShipDate: string | null) =>
+      row({ code, recentCount, lastShipDate, stock: stock(null), days: null });
     const rows = [u("Z", 10, "2025-11-01"), u("B", 50, "2025-10-01"), u("A", 10, "2025-12-20"), u("C", 10, "2025-12-20"), u("Y", 0, null)];
     expect(sortRows(rows, "unchecked").map((r) => r.code)).toEqual(["B", "A", "C", "Z", "Y"]);
+  });
+  it("미확인 목록: 출고량(단위가 다름)은 정렬에 쓰지 않는다 — 낱개 100,320개 1회보다 12회가 위", () => {
+    const pieces = row({ code: "AMBT129", recentCount: 1, recentQty: 100_320, unitsPerBox: 1, stock: stock(null), days: null });
+    const boxes = row({ code: "TM00001", recentCount: 12, recentQty: 300, stock: stock(null), days: null });
+    expect(sortRows([pieces, boxes], "unchecked").map((r) => r.code)).toEqual(["TM00001", "AMBT129"]);
   });
   it("단종(폐기)은 맨 아래", () => {
     const rows = [row({ code: "A", name: "폐기 - 통", days: 0 }), row({ code: "B", days: 9 })];

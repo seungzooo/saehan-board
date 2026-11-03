@@ -27,9 +27,12 @@ export async function getActivityBasis(): Promise<ActivityBasis> {
   return { latestShipDate, basisYm: w.toYm, fromYm: w.fromYm, months: ACTIVE_MONTHS, recentFromYm: shiftYm(w.toYm, -(RECENT_QTY_MONTHS - 1)) };
 }
 
-export type Activity = { lastShipDate: string | null; inWindow: boolean; recentQty: number };
+export type Activity = { lastShipDate: string | null; inWindow: boolean; recentCount: number; recentQty: number };
 
-/** 품번별 최근 정상·내수 출고일(전 기간), 기간 내 출고 여부, 최근 3개 달 출고량 */
+/**
+ * 품번별 최근 정상·내수 출고일(전 기간), 기간 내 출고 여부, 최근 3개 달 출고 건수와 출고량.
+ * 건수 = 출고 행 수. 출고실적은 (출고일자, 품번, 전표번호)가 유일하므로 품번별 행 수 = 그 품번이 실린 전표 수.
+ */
 export async function getActivityMap(basis: ActivityBasis): Promise<Map<string, Activity>> {
   const map = new Map<string, Activity>();
   if (!basis) return map;
@@ -44,14 +47,17 @@ export async function getActivityMap(basis: ActivityBasis): Promise<Map<string, 
       by: ["productCode"],
       where: { ...NORMAL_DOMESTIC, yearMonth: { gte: basis.recentFromYm, lte: basis.basisYm } },
       _sum: { qtyBox: true },
+      _count: { _all: true },
     }),
   ]);
   const inWin = new Set(windowRows.map((r) => r.productCode));
   const recent = new Map(recentRows.map((r) => [r.productCode, r._sum.qtyBox ?? 0]));
+  const recentCount = new Map(recentRows.map((r) => [r.productCode, r._count._all]));
   for (const r of lastRows) {
     map.set(r.productCode, {
       lastShipDate: r._max.date ? r._max.date.toISOString().slice(0, 10) : null,
       inWindow: inWin.has(r.productCode),
+      recentCount: recentCount.get(r.productCode) ?? 0,
       recentQty: Math.round((recent.get(r.productCode) ?? 0) * 10) / 10,
     });
   }
@@ -87,6 +93,7 @@ export async function getStockUniverse(): Promise<{ basis: ActivityBasis; rows: 
       stock,
       days: daysOfStock(stock, rates.get(p.code) ?? null, rates.basisTo).days,
       lastShipDate: a?.lastShipDate ?? null,
+      recentCount: a?.recentCount ?? 0,
       recentQty: a?.recentQty ?? 0,
     };
   });

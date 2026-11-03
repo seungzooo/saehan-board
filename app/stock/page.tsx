@@ -12,9 +12,9 @@ import { Suspense } from "react";
 export const dynamic = "force-dynamic";
 
 const VIEWS: Record<ListView, { title: string; sort: string; toggle: boolean }> = {
-  all: { title: "관리 대상 전체", sort: "확인된 품목(소진일수 짧은 순) → 확인 필요(최근 출고량 많은 순)", toggle: true },
+  all: { title: "관리 대상 전체", sort: "확인된 품목(소진일수 짧은 순) → 확인 필요(최근 출고 건수 많은 순)", toggle: true },
   checked: { title: "확인 — 이번 기준재고에 있는 품목", sort: "소진일수 짧은 순, 산정 불가는 마지막", toggle: true },
-  unchecked: { title: "미확인 — 최근 재고 파일에 없음", sort: `최근 ${RECENT_QTY_MONTHS}개 달 출고량 많은 순 → 최근 출고일 → 품번`, toggle: true },
+  unchecked: { title: "미확인 — 최근 재고 파일에 없음", sort: `최근 ${RECENT_QTY_MONTHS}개 달 출고 건수 많은 순 → 최근 출고일 → 품번`, toggle: true },
   low: { title: `곧 소진 — 소진 ${LOW_DAYS_THRESHOLD}일 이하`, sort: "소진일수 짧은 순", toggle: true },
   dormant: { title: "휴면 — 최근 12개 달 정상·내수 출고 없음", sort: "최근 출고일 최신 순", toggle: false },
   dormantStock: { title: "휴면이지만 재고 있음", sort: "현재 재고 많은 순", toggle: false },

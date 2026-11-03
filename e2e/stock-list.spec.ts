@@ -32,23 +32,23 @@ test("미확인 목록 390px: 품번·3개월 출고량·단위가 보이고 큰
   const rows = page.getByTestId("list-row");
   await expect(rows.first()).toBeVisible();
   const first = rows.first();
-  for (const id of ["row-code", "row-recent-qty"]) {
+  for (const id of ["row-code", "row-recent-count", "row-recent-qty"]) {
     const box = await first.getByTestId(id).boundingBox();
     expect(box, `${id} 보임`).not.toBeNull();
     expect(box!.x + box!.width, `${id} 화면 안`).toBeLessThanOrEqual(390);
   }
-  await expect(first.getByTestId("row-recent-qty")).toContainText(/(박스|파렛트|필름|포장|개)$/);
+  await expect(first.getByTestId("row-recent")).toContainText(/최근 3개월 출고 [\d,]+회 · [\d,.]+(박스|파렛트|필름|포장|개)$/);
   // 큰 문구(text-2xl 이상)로 된 '확인 필요'가 없어야 한다
   const big = await page.locator("main :is(.text-2xl,.text-3xl,.text-4xl,.text-5xl)", { hasText: "확인 필요" }).count();
   expect(big).toBe(0);
   await expectNoHorizontalScroll(page);
 });
 
-test("미확인 목록: 전체 정렬 후 페이지 분할 — 1페이지 마지막 ≥ 2페이지 첫 항목 (3개월 출고량)", async ({ page }) => {
+test("미확인 목록: 전체 정렬 후 페이지 분할 — 1페이지 마지막 ≥ 2페이지 첫 항목 (3개월 출고 건수)", async ({ page }) => {
   const qtyOf = async (p: Page, which: "first" | "last") => {
-    const loc = p.getByTestId("row-recent-qty");
+    const loc = p.getByTestId("row-recent-count");
     const el = which === "first" ? loc.first() : loc.last();
-    return Number(((await el.locator("b").textContent()) ?? "0").replace(/,/g, ""));
+    return Number(((await el.textContent()) ?? "0").replace(/,/g, ""));
   };
   await page.goto("/stock?view=unchecked");
   const lastOn1 = await qtyOf(page, "last");

@@ -57,9 +57,12 @@ export default function StockListRow({ row, lowDays }: { row: Row; lowDays: numb
             </>
           ) : null}
           <span>최근 출고 {row.lastShipDate ?? "없음"}</span>
-          <span data-testid="row-recent-qty">
-            {RECENT_QTY_MONTHS}개월 <b className="text-zinc-900">{nf(row.recentQty)}</b>
-            {unit}
+          <span data-testid="row-recent">
+            최근 {RECENT_QTY_MONTHS}개월 출고 <b className="text-zinc-900" data-testid="row-recent-count">{row.recentCount.toLocaleString()}</b>회 ·{" "}
+            <span data-testid="row-recent-qty">
+              {nf(row.recentQty)}
+              {unit}
+            </span>
           </span>
         </span>
         <span className="hidden sm:inline">
