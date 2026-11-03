@@ -240,6 +240,11 @@ function PreviewCard({
         기존 대비 신규 {p.added.toLocaleString()} / 변경 {p.changed.toLocaleString()} / 누락 {p.missing.toLocaleString()} 품목
         <span className="ml-1 font-normal text-blue-900">(동일 {p.same.toLocaleString()} · 파일 정상 {p.fileProducts.toLocaleString()})</span>
       </p>
+      {p.duplicateCodes > 0 && (
+        <p data-testid="dup-codes" className="font-semibold text-orange-800">
+          중복 품번 {p.duplicateCodes.toLocaleString()}개 — 같은 품번이 두 줄 이상이라 합산하지 않고 &ldquo;확인 필요&rdquo;로 둡니다.
+        </p>
+      )}
       <p className="text-xs text-blue-900">
         {p.previousBatch
           ? `기존 기준: ${p.previousBatch.fileName} · ${formatDateTime(p.previousBatch.uploadedAt)} · ${p.previousBatch.products.toLocaleString()}품목`
@@ -248,7 +253,7 @@ function PreviewCard({
       {p.errorCount > 0 && (
         <p className="text-red-800">
           오류 {p.errorCount.toLocaleString()}행 — 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
-          {ec.other > 0 && ` · 기타 ${ec.other.toLocaleString()}`}. 저장하면 이 행들은 제외되고 해당 품목은 &ldquo;재고 확인 필요&rdquo;가 됩니다.
+          {ec.other > 0 && ` · 기타 ${ec.other.toLocaleString()}`}. 저장하면 이 행들은 제외되고 해당 품목은 &ldquo;확인 필요&rdquo;가 됩니다.
         </p>
       )}
       <ErrorDetails errors={p.errors} title={`문제 행 ${p.errorCount.toLocaleString()}건 펼쳐보기`} />
@@ -351,12 +356,14 @@ function errorCounts(errors: RowError[]) {
   let code = 0;
   let qty = 0;
   let other = 0;
+  const dupCodes = new Set<string>();
   for (const e of errors) {
     if (e.kind === "CODE") code++;
     else if (e.kind === "QTY") qty++;
+    else if (e.kind === "DUP") dupCodes.add(e.code ?? String(e.row));
     else other++;
   }
-  return { code, qty, other };
+  return { code, qty, other, dup: dupCodes.size };
 }
 
 function ErrorDetails({ errors, title }: { errors: RowError[]; title: string }) {
@@ -409,6 +416,7 @@ function ResultCard({
           </li>
           <li>
             정상 반영 {x.inserted.toLocaleString()} · 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
+            {ec.dup > 0 && ` · 중복 품번 ${ec.dup.toLocaleString()}개`}
             {ec.other > 0 && ` · 기타 오류 ${ec.other.toLocaleString()}`}
             {(x.carried ?? 0) > 0 && ` · 이월 ${x.carried!.toLocaleString()}`}
             {(x.duplicates ?? 0) > 0 && ` · 중복 건너뜀 ${x.duplicates!.toLocaleString()}`}
@@ -439,6 +447,7 @@ function ResultCard({
         </p>
         <p className="mt-1">
           정상 {r.validRows.toLocaleString()} · 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
+          {ec.dup > 0 && ` · 중복 품번 ${ec.dup.toLocaleString()}개`}
           {ec.other > 0 && ` · 기타 ${ec.other.toLocaleString()}`}
         </p>
         <p className="mt-1">

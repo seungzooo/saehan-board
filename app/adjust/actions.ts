@@ -5,6 +5,8 @@ import type { AdjustmentReason, AvailableStock } from "@/lib/availableStock";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@/lib/generated/prisma/client";
 import { computeForProducts } from "@/lib/stock";
+import { requirePin } from "@/lib/pin";
+import { isDiscontinued } from "@/lib/search";
 import { revalidatePath } from "next/cache";
 
 /** 로그인 없음(F8 삭제). 입력자는 고정값으로 기록 */
@@ -20,12 +22,24 @@ export type ProductHit = {
   packUnit: string;
   unitsPerBox: number;
   category: string | null;
+  /** 목록 오른쪽 작은 표시: "30박스" / "확인 필요" */
+  stockLabel?: string;
 };
 
+/** 품목별 현재 재고 라벨 — "30박스" 또는 "확인 필요" */
+export async function stockLabels(codes: string[]): Promise<Record<string, string>> {
+  if (await requirePin()) return {};
+  const stocks = await computeForProducts([...new Set(codes)]);
+  const out: Record<string, string> = {};
+  for (const [code, s] of stocks) out[code] = s.available === null ? "확인 필요" : `${s.available.toLocaleString()}박스`;
+  return out;
+}
+
 export async function searchProductsAction(q: string): Promise<ProductHit[]> {
+  if (await requirePin()) return [];
   const terms = q.trim().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
-  return prisma.product.findMany({
+  const hits = await prisma.product.findMany({
     where: {
       isActive: true,
       AND: terms.map((t) => ({
@@ -36,14 +50,21 @@ export async function searchProductsAction(q: string): Promise<ProductHit[]> {
     take: 20,
     select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
   });
+  const labels = await stockLabels(hits.map((h) => h.code));
+  // 단종(품명이 "폐기"로 시작)은 맨 아래
+  return hits
+    .map((h) => ({ ...h, stockLabel: labels[h.code] }))
+    .sort((a, b) => Number(isDiscontinued(a.name)) - Number(isDiscontinued(b.name)));
 }
 
 export async function listOpenOrdersAction(productCode: string): Promise<OpenOrder[]> {
+  if (await requirePin()) return [];
   return listOpenOrders(productCode);
 }
 
 /** 품목의 현재 재고 — 변동 입력 화면의 "현재 N → 반영 후 M" 표시용 */
 export async function getStockAction(productCode: string): Promise<AvailableStock | null> {
+  if (await requirePin()) return null;
   return (await computeForProducts([productCode])).get(productCode) ?? null;
 }
 
@@ -61,6 +82,8 @@ export async function createAdjustmentAction(input: {
   orderId?: number | null; // reason=SHIPMENT일 때 이행한 수주
   requestId: string; // 클라이언트가 폼마다 1회 발급 — 연타·동시 입력 멱등
 }): Promise<SaveResult> {
+  const denied = await requirePin();
+  if (denied) return { ok: false, message: denied };
   const qty = Number(input.qtyBox);
   if (!Number.isInteger(qty) || qty <= 0) return { ok: false, message: "수량은 1 이상의 정수여야 합니다." };
   if (!(INPUT_REASONS as string[]).includes(input.reason)) return { ok: false, message: "사유가 잘못되었습니다." };
@@ -137,6 +160,8 @@ export async function correctAdjustmentAction(input: {
   reason: string;
   requestId: string;
 }): Promise<CorrectResult> {
+  const denied = await requirePin();
+  if (denied) return { ok: false, message: denied };
   const newQty = Number(input.newQtyBox);
   if (!Number.isInteger(newQty) || newQty < 0) return { ok: false, message: "정정 수량은 0 이상의 정수여야 합니다." };
   const why = input.reason?.trim();
@@ -179,6 +204,8 @@ export async function correctAdjustmentAction(input: {
 export type CancelResult = { ok: true; item: AdjustmentItem; stock: AvailableStock } | { ok: false; message: string };
 
 export async function cancelAdjustmentAction(id: number): Promise<CancelResult> {
+  const denied = await requirePin();
+  if (denied) return { ok: false, message: denied };
   const existing = await prisma.stockAdjustment.findUnique({ where: { id }, include: { product: { select: { name: true } } } });
   if (!existing) return { ok: false, message: "해당 변동이 없습니다." };
   if (existing.cancelledAt) return { ok: false, message: "이미 취소된 변동입니다." };

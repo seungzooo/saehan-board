@@ -4,7 +4,7 @@ import { LOW_DAYS_THRESHOLD } from "@/config/stock";
 import { getDashboard } from "@/lib/dashboard";
 import { formatDateTime, formatShort, isSameSeoulDay } from "@/lib/format";
 import { getStockBasis, searchStock } from "@/lib/stock";
-import { availableText, BasisLine, daysText } from "@/lib/stockDisplay";
+import { availableText, BasisLine, daysText, isDiscontinued } from "@/lib/stockDisplay";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -34,14 +34,36 @@ async function Results({ q }: { q: string }) {
       </div>
     );
   }
+  // 확인된 품목이 위(단종은 그 아래), 확인 필요 품목은 접힌 묶음으로 맨 아래
+  const checked = rows.filter((r) => r.stock.available !== null);
+  const active = checked.filter((r) => !isDiscontinued(r.name));
+  const discontinued = checked.filter((r) => isDiscontinued(r.name));
+  const unchecked = rows.filter((r) => r.stock.available === null);
   return (
     <section className="flex flex-col gap-2">
-      <p className="text-xs text-zinc-500">
-        {rows.length}개 품목{truncated && " (상위 50개만 표시 — 검색어를 더 구체적으로)"}
+      <p className="num text-xs text-zinc-500">
+        {rows.length}개 품목 · 확인됨 {checked.length} · 재고 미확인 {unchecked.length}
+        {truncated && " (상위 50개만 표시 — 검색어를 더 구체적으로)"}
       </p>
-      {rows.map((r) => (
+      {[...active, ...discontinued].map((r) => (
         <StockCard key={r.code} row={r} q={q} />
       ))}
+      {checked.length === 0 && <p className="rounded-lg border border-zinc-200 p-3 text-sm text-zinc-500">이번 기준재고에 있는 품목이 없습니다.</p>}
+      {unchecked.length > 0 && (
+        <details data-testid="unchecked-group" className="rounded-lg border border-dashed border-zinc-400">
+          <summary className="flex min-h-12 cursor-pointer items-center justify-between px-4 text-sm text-zinc-600 hover:bg-zinc-50">
+            <span>
+              재고 미확인 <b className="num">{unchecked.length}개</b> — 최근 재고 파일에 없음
+            </span>
+            <span className="text-xs">펼치기</span>
+          </summary>
+          <div className="flex flex-col gap-2 p-2">
+            {unchecked.map((r) => (
+              <StockCard key={r.code} row={r} q={q} />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }

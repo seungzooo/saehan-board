@@ -15,7 +15,7 @@ type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: D
 
 function makeFakeDb() {
   // 제품 마스터에 있는 품번만 재고 파일에서 받아들인다 (없으면 "품번 불일치")
-  const state = { batches: [] as Batch[], snapshots: [] as Snap[], products: new Set<string>(["TM00329", "EM00001"]) };
+  const state = { batches: [] as Batch[], snapshots: [] as Snap[], products: new Set<string>(["TM00329", "EM00001", "FM00010"]) };
   let seq = 0;
   const client = (s: typeof state) => ({
     uploadBatch: {
@@ -61,7 +61,9 @@ const GOOD = "품번\t품명/규격\t재고수량(박스)\r\nTM00329\t지평 1.7
 const BAD_COLUMNS = "품번\t품명\r\nTM00329\t지평 1.7L\r\n";
 // 3행 수량 오류(숫자 아님), 4행 품번 불일치, 5행 수량 누락
 const ROW_ERROR =
-  "품번\t품명/규격\t재고수량\r\nTM00329\t지평 1.7L\t130\r\nEM00001\tCJ 식용유\tabc\r\nZZ9999\t없는 품번\t5\r\nTM00329\t지평 1.7L\t\r\n";
+  "품번\t품명/규격\t재고수량\r\nTM00329\t지평 1.7L\t130\r\nEM00001\tCJ 식용유\tabc\r\nZZ9999\t없는 품번\t5\r\nFM00010\t쌀용기 2L\t\r\n";
+// 같은 품번 두 줄 (창고별 행 등) — 합산하지 않고 그 품번은 확인 필요
+const DUP_CODE = "품번\t재고수량\r\nTM00329\t70\r\nEM00001\t15\r\nTM00329\t60\r\n";
 
 describe("잘못된 재고 파일 → 직전 기준 유지", () => {
   let fake: ReturnType<typeof makeFakeDb>;
@@ -116,6 +118,24 @@ describe("잘못된 재고 파일 → 직전 기준 유지", () => {
     const snaps = fake.state.snapshots.filter((s) => s.batchId === latest.id);
     expect(snaps.map((s) => s.productCode)).toEqual(["TM00329"]);
     expect(snaps[0].qtyBox).toBe(130);
+  });
+
+  it("같은 품번 두 줄 → 합산하지 않고 그 품번은 스냅샷에서 빠진다(확인 필요), 확인 전에는 저장 안 함", async () => {
+    const r = await processUpload("STOCK", "dup.xls", cp949(DUP_CODE), "t", {}, fake.db);
+    expect(r.status).toBe("row-errors");
+    if (r.status !== "row-errors") return;
+    expect(r.errors.map((e) => [e.row, e.kind, e.code])).toEqual([
+      [2, "DUP", "TM00329"],
+      [4, "DUP", "TM00329"],
+    ]);
+    expect(r.validRows).toBe(1);
+    expect(fake.state.batches).toHaveLength(1); // 아직 저장 안 함
+
+    const saved = await processUpload("STOCK", "dup.xls", cp949(DUP_CODE), "t", { allowRowErrors: true }, fake.db);
+    expect(saved.status).toBe("saved");
+    const latest = fake.state.batches[1];
+    const snaps = fake.state.snapshots.filter((s) => s.batchId === latest.id);
+    expect(snaps.map((s) => [s.productCode, s.qtyBox])).toEqual([["EM00001", 15]]); // TM00329는 130(합산)으로 들어가지 않는다
   });
 
   it("같은 파일은 다시 저장하지 않는다", async () => {

@@ -3,10 +3,16 @@
  *
  * - parseCapacityMl("2L") = 2000, ("2000ml") = 2000, ("1.8L") = 1800, ("450") = 450(ml), ("TM00329") = null
  * - formatCapacity(1800) = "1.8L", (2000) = "2L", (450) = "450ml"
- * - rankProducts: 품번 정확 일치 → 용량 일치 → 이름에 토큰이 온전한 단위로 등장 → 나머지(부분 일치)
+ * - rankProducts: 품번 정확 일치 → 용량 일치 → 이름에 토큰이 온전한 단위로 등장 → 나머지(부분 일치).
+ *   단종(품명이 "폐기"로 시작)은 품번 정확 일치가 아니면 맨 아래.
  */
 
 export type SearchableProduct = { code: string; name: string; capacity: string | null };
+
+/** 품명이 "폐기"로 시작하면 단종 */
+export function isDiscontinued(name: string): boolean {
+  return name.trim().startsWith("폐기");
+}
 
 const CAP_RE = /^(\d+(?:\.\d+)?)\s*(l|ℓ|리터|ml|㎖|cc)?$/i;
 
@@ -73,7 +79,10 @@ export function rankProducts<T extends SearchableProduct>(items: T[], query: str
       return { item, rank: 2 };
     return { item, rank: 3 };
   });
-  return ranked.sort((a, b) => a.rank - b.rank || a.item.name.localeCompare(b.item.name, "ko")).map((r) => r.item);
+  const tail = (r: RankedProduct<T>) => (r.rank > 0 && isDiscontinued(r.item.name) ? 1 : 0);
+  return ranked
+    .sort((a, b) => tail(a) - tail(b) || a.rank - b.rank || a.item.name.localeCompare(b.item.name, "ko"))
+    .map((r) => r.item);
 }
 
 /** 검색어에서 DB 후보 조회용 용량 문자열들 — "2L" → ["2000", "2L", "2.0L", "2000ml"] */

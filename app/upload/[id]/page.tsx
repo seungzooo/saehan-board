@@ -1,3 +1,4 @@
+import PinGate from "@/components/PinGate";
 import type { UploadKind } from "@/config/excel-mapping";
 import { getBatchDetail, UPLOAD_KIND_LABEL } from "@/lib/excel/upload";
 import { formatDateTime } from "@/lib/format";
@@ -9,7 +10,7 @@ import CancelBatchButton from "./CancelBatchButton";
 export const dynamic = "force-dynamic";
 
 /** 업로드 상세: 재고면 품목별 이전 → 새 수량, 건수, "이 업로드 취소", "재고 보기" */
-export default async function UploadDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ page?: string }> }) {
+async function UploadDetailPageInner({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ page?: string }> }) {
   const [{ id }, { page: pageRaw }] = await Promise.all([params, searchParams]);
   const d = await getBatchDetail(id);
   if (!d) notFound();
@@ -156,5 +157,14 @@ export default async function UploadDetailPage({ params, searchParams }: { param
         )}
       </section>
     </main>
+  );
+}
+
+/** PIN 보호: UPLOAD_PIN 세션이 있어야 열린다 (없으면 PIN 입력 / 미설정 안내) */
+export default async function UploadDetailPage(props: Parameters<typeof UploadDetailPageInner>[0]) {
+  return (
+    <PinGate title="업로드 상세">
+      <UploadDetailPageInner {...props} />
+    </PinGate>
   );
 }

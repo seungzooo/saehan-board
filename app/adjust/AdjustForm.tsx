@@ -3,7 +3,7 @@
 import type { AdjustmentItem, OpenOrder } from "@/lib/adjust";
 import { REASON_LABEL, type AvailableStock } from "@/lib/availableStock";
 import { formatShort } from "@/lib/format";
-import { availableText, productInfoText } from "@/lib/stockDisplay";
+import { availableText, DiscontinuedBadge, isDiscontinued, productInfoText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import {
@@ -41,11 +41,13 @@ export default function AdjustForm({
   initialStock,
   initialOpenOrders,
   initialRecent,
+  initialLabels,
 }: {
   preselected: ProductHit | null;
   initialStock: AvailableStock | null;
   initialOpenOrders: OpenOrder[];
   initialRecent: AdjustmentItem[];
+  initialLabels: Record<string, string>;
 }) {
   const [product, setProduct] = useState<ProductHit | null>(preselected);
   const [stock, setStock] = useState<AvailableStock | null>(initialStock);
@@ -59,6 +61,9 @@ export default function AdjustForm({
   const [orderId, setOrderId] = useState<number | "">("");
   const [requestId, setRequestId] = useState(newRequestId);
   const [recent, setRecent] = useState(initialRecent);
+  const [labels, setLabels] = useState<Record<string, string>>(initialLabels);
+  const rememberStock = (code: string, s: AvailableStock) =>
+    setLabels((m) => ({ ...m, [code]: s.available === null ? "확인 필요" : `${s.available.toLocaleString()}박스` }));
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string; stock?: AvailableStock } | null>(null);
   const [correcting, setCorrecting] = useState<AdjustmentItem | null>(null);
   const [pending, startTransition] = useTransition();
@@ -120,8 +125,10 @@ export default function AdjustForm({
   }
 
   // "현재 30박스 → 출고 20 → 반영 후 10박스" 미리 계산 (수주 연결 시 해당 수주 차감이 풀리는 것까지)
-  const n = Number(qty);
+  const n = qty === "" ? NaN : Number(qty); // qty는 숫자만 (쉼표 없음)
   const validQty = Number.isInteger(n) && n > 0;
+  const overStock = validQty && stock !== null && stock.available !== null && n > stock.available;
+  const bump = (d: number) => setQty((v) => String(Math.min(9_999_999, (Number(v) || 0) + d)));
   const linkedOrder = reason === "SHIPMENT" && orderId !== "" ? openOrders.find((o) => o.id === orderId) : undefined;
   const after = stock && stock.available !== null && validQty ? stock.available - n + (linkedOrder?.qtyBox ?? 0) : null;
 
@@ -132,6 +139,7 @@ export default function AdjustForm({
       setFlash({ kind: "err", text: "수량은 1 이상의 정수로 입력하세요." });
       return;
     }
+    if (overStock && !window.confirm(`현재 재고 ${stock!.available!.toLocaleString()}박스보다 큰 ${n.toLocaleString()}박스입니다. 그래도 저장할까요?`)) return;
     const linked = reason === "SHIPMENT" && orderId !== "" ? orderId : null;
     const rid = requestId;
     startTransition(async () => {
@@ -143,6 +151,7 @@ export default function AdjustForm({
       setRequestId(newRequestId()); // 다음 입력은 새 요청 ID
       setRecent((list) => (list.some((x) => x.id === r.item.id) ? list : [r.item, ...list].slice(0, 50)));
       setStock(r.stock);
+      rememberStock(product.code, r.stock);
       setFlash({
         kind: "ok",
         text: `${product.name} ${REASON_LABEL[reason]} −${n.toLocaleString()} 저장${linked ? " (수주 차감 해제)" : ""}${r.deduped ? " · 중복 요청은 한 건만 저장됨" : ""}`,
@@ -166,6 +175,7 @@ export default function AdjustForm({
       }
       setRecent((list) => list.map((x) => (x.id === r.item.id || x.correctsId === r.item.id ? { ...x, cancelledAt: r.item.cancelledAt } : x)));
       setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 현재 재고 ${availableText(r.stock)}`, stock: r.stock });
+      rememberStock(item.productCode, r.stock);
       if (product && product.code === item.productCode) {
         setStock(r.stock);
         await loadProductState(product.code);
@@ -184,6 +194,7 @@ export default function AdjustForm({
       setCorrecting(null);
       setRecent((list) => [r.correction, ...list].slice(0, 50));
       setFlash({ kind: "ok", text: `정정됨 — ${item.productName} ${item.qtyBox.toLocaleString()} → ${newQty.toLocaleString()}`, stock: r.stock });
+      rememberStock(item.productCode, r.stock);
       if (product && product.code === item.productCode) {
         setStock(r.stock);
         await loadProductState(product.code);
@@ -227,9 +238,19 @@ export default function AdjustForm({
                 {hits.length === 0 && !searching && <li className="py-3 text-sm text-zinc-500">검색 결과 없음</li>}
                 {hits.map((h) => (
                   <li key={h.code}>
-                    <button type="button" onClick={() => pick(h)} className="flex w-full flex-col items-start px-1 py-3 text-left active:bg-zinc-50">
-                      <span className="font-medium">{h.name}</span>
-                      <span className="text-xs text-zinc-500">{productInfoText(h)}</span>
+                    <button
+                      type="button"
+                      onClick={() => pick(h)}
+                      className={`flex min-h-12 w-full items-center gap-2 px-1 py-3 text-left hover:bg-blue-50 active:bg-zinc-50 ${isDiscontinued(h.name) ? "text-zinc-400" : ""}`}
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="flex items-center gap-1 font-medium">
+                          <span className="truncate">{h.name}</span>
+                          <DiscontinuedBadge name={h.name} />
+                        </span>
+                        <span className="truncate text-xs text-zinc-500">{productInfoText(h)}</span>
+                      </span>
+                      <span className={`num shrink-0 text-xs ${h.stockLabel === "확인 필요" ? "text-zinc-400" : "font-semibold text-zinc-700"}`}>{h.stockLabel}</span>
                     </button>
                   </li>
                 ))}
@@ -242,20 +263,47 @@ export default function AdjustForm({
       {/* ② 수량 · 사유 · ③ 저장 */}
       {product && (
         <form onSubmit={submit} className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-zinc-600">수량 (박스)</span>
-            <input
-              ref={qtyRef}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              placeholder="0"
-              className="h-14 rounded-lg border border-zinc-300 px-4 text-2xl font-semibold tabular-nums outline-none focus:border-blue-500"
-            />
-          </label>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="qty" className="text-sm text-zinc-600">
+              수량
+            </label>
+            <div className="relative">
+              <input
+                id="qty"
+                ref={qtyRef}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9,]*"
+                autoComplete="off"
+                aria-describedby="qty-help"
+                value={qty === "" ? "" : Number(qty).toLocaleString()}
+                onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "").slice(0, 7))}
+                placeholder="0"
+                className={`num h-14 w-full rounded-lg border px-4 pr-16 text-2xl font-semibold outline-none focus:border-blue-500 ${overStock ? "border-orange-500" : "border-zinc-300"}`}
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-base text-zinc-500">박스</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[1, 5, 10].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => bump(d)}
+                  className="num h-11 rounded-lg border border-zinc-300 bg-white text-base font-medium text-zinc-700 hover:bg-blue-50"
+                >
+                  +{d}
+                </button>
+              ))}
+            </div>
+            {overStock && (
+              <p role="alert" className="text-sm font-medium text-orange-700">
+                현재 재고 {stock!.available!.toLocaleString()}박스보다 큽니다. 저장 전에 한 번 더 확인합니다.
+              </p>
+            )}
+            <p id="qty-help" className="text-xs text-zinc-500">
+              박스 단위로 입력. 낱개 단위 불량은 생산지원팀에 확인하세요.
+            </p>
+          </div>
           <div role="radiogroup" aria-label="사유" className="grid grid-cols-4 gap-2">
             {REASONS.map((r) => (
               <button
@@ -389,6 +437,12 @@ export default function AdjustForm({
                       {it.memo && ` · ${it.memo}`} · {formatShort(it.createdAt)} {it.createdBy}
                     </p>
                   </Link>
+                  <span
+                    className={`num w-14 shrink-0 text-right text-xs ${labels[it.productCode] === "확인 필요" || !labels[it.productCode] ? "text-zinc-400" : "text-zinc-700"}`}
+                    title="현재 재고"
+                  >
+                    {labels[it.productCode] ?? "—"}
+                  </span>
                   {cancelled ? (
                     <span className="shrink-0 text-xs">취소됨</span>
                   ) : (

@@ -14,6 +14,7 @@ import { rebuildMonthlyStat } from "@/lib/analytics/monthlyStat";
 import { prisma } from "@/lib/db";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import {
+  duplicateCodes,
   importCustomers,
   importProduction,
   importProducts,
@@ -168,6 +169,8 @@ export type StockPreview =
       same: number; // 둘 다 있고 수량 같음
       missing: number; // 기존 배치에는 있고 파일에는 없음 (REPLACE면 확인 필요, MERGE면 이월)
       missingSample: { code: string; name: string; qtyBox: number }[];
+      /** 같은 파일에 두 줄 이상 나온 품번 수 — 합산하지 않고 확인 필요 */
+      duplicateCodes: number;
       changedSample: { code: string; name: string; before: number; after: number }[];
       errors: RowError[];
       errorCount: number;
@@ -195,9 +198,14 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
   );
   const qty = new Map<string, number>();
   const errors: RowError[] = [];
+  const dups = duplicateCodes(mapped.rows.map((r) => r.productCode));
   for (const r of mapped.rows) {
     const code = r.productCode;
     if (!code) continue;
+    if (dups.has(code)) {
+      errors.push({ row: r.__row, message: `중복 품번: ${code} 이(가) 파일에 ${dups.get(code)}줄 — 합산하지 않고 확인 필요로 둡니다`, kind: "DUP", code });
+      continue;
+    }
     if (!products.has(code)) {
       errors.push({ row: r.__row, message: `품번 불일치: "${code}" 이(가) 제품 마스터에 없음`, kind: "CODE", code });
       continue;
@@ -248,6 +256,7 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
     same,
     missing: missingList.length,
     missingSample: missingList.slice(0, 10).map(([code, p]) => ({ code, name: p.name, qtyBox: p.qtyBox })),
+    duplicateCodes: dups.size,
     changedSample,
     errors,
     errorCount: errors.length,

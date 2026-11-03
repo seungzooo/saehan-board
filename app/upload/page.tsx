@@ -1,3 +1,4 @@
+import PinGate from "@/components/PinGate";
 import type { UploadKind } from "@/config/excel-mapping";
 import { prisma } from "@/lib/db";
 import { UPLOAD_KIND_LABEL } from "@/lib/excel/upload";
@@ -10,7 +11,7 @@ import UploadForm from "./UploadForm";
 
 export const dynamic = "force-dynamic";
 
-export default async function UploadPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
+async function UploadPageInner({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
   const { kind } = await searchParams;
   const initialKind = (Object.keys(UPLOAD_KIND_LABEL).includes(kind ?? "") ? kind : "STOCK") as UploadKind;
 
@@ -52,5 +53,14 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
         }))}
       />
     </main>
+  );
+}
+
+/** PIN 보호: UPLOAD_PIN 세션이 있어야 열린다 (없으면 PIN 입력 / 미설정 안내) */
+export default async function UploadPage(props: Parameters<typeof UploadPageInner>[0]) {
+  return (
+    <PinGate title="엑셀 업로드">
+      <UploadPageInner {...props} />
+    </PinGate>
   );
 }

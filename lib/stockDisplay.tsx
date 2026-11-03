@@ -2,7 +2,9 @@
 import { LOW_DAYS_THRESHOLD, STALE_AFTER_HOURS } from "@/config/stock";
 import type { AvailableStock } from "@/lib/availableStock";
 import { formatDateTime, formatShort, isStale } from "@/lib/format";
-import { productCapacityLabel } from "@/lib/search";
+import { isDiscontinued, productCapacityLabel } from "@/lib/search";
+
+export { isDiscontinued };
 import type { DaysOfStock, StockBasis } from "@/lib/stock";
 
 export const NEEDS_CHECK = "확인 필요";
@@ -80,9 +82,33 @@ export function productInfoText(p: ProductInfoLike): string {
   const parts = [`품번 ${p.code}`];
   const cap = productCapacityLabel(p);
   if (cap) parts.push(`용량 ${cap}`);
-  parts.push(`1${p.packUnit || "박스"}당 ${p.unitsPerBox.toLocaleString()}개`);
+  parts.push(packLabel(p.packUnit, p.unitsPerBox));
   if (p.category) parts.push(p.category);
   return parts.join(" · ");
+}
+
+/** 포장단위 이름으로 쓰는 값 — "1박스당", "1파렛트당", "1필름당" */
+const NAMED_PACK_UNITS = ["박스", "파렛트", "필름"];
+
+/**
+ * 입수 표시. 포장단위가
+ *   박스·파렛트·필름   → "1박스당 105개" (단위 이름 그대로)
+ *   규격 코드(83*155 등) → "1포장(83*155)당 90개"
+ *   "없음" 또는 빈 값    → "입수 105개"
+ *   그 밖의 코드(A14P 등) → "1포장(A14P)당 N개"
+ */
+export function packLabel(packUnit: string | null | undefined, unitsPerBox: number): string {
+  const unit = (packUnit ?? "").trim();
+  const n = unitsPerBox.toLocaleString();
+  if (!unit || unit === "없음") return `입수 ${n}개`;
+  if (NAMED_PACK_UNITS.includes(unit)) return `1${unit}당 ${n}개`;
+  return `1포장(${unit})당 ${n}개`;
+}
+
+/** 단종(품명이 "폐기"로 시작) 배지 — 목록 맨 아래, 회색 */
+export function DiscontinuedBadge({ name }: { name: string }) {
+  if (!isDiscontinued(name)) return null;
+  return <span className="inline-block shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-semibold text-zinc-500">단종</span>;
 }
 
 /** 파일명에 샘플·테스트·개발용이 들어가면 샘플 데이터로 표시 */

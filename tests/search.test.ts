@@ -83,4 +83,14 @@ describe("rankProducts", () => {
     const codes = rankProducts(items, "쌀용기").map((p) => p.code);
     expect(codes[0]).toBe("TM00003");
   });
+
+  it("단종(폐기로 시작)은 맨 아래, 단 품번 정확 일치는 맨 위", () => {
+    const list = [
+      { code: "P1", name: "폐기 - 쌀용기 2L", capacity: "2000" },
+      { code: "P2", name: "쌀용기 2L", capacity: "2000" },
+      { code: "P3", name: "말통 12L", capacity: "12000" },
+    ];
+    expect(rankProducts(list, "2L").map((p) => p.code)).toEqual(["P2", "P3", "P1"]);
+    expect(rankProducts(list, "P1")[0].code).toBe("P1");
+  });
 });

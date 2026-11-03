@@ -145,4 +145,14 @@ describe("재고 업로드 미리보기 / MERGE / 복구", () => {
     const rv = await revertLatestStock(day1.id, fake.db);
     expect(rv.ok).toBe(false);
   });
+
+  it("미리보기: 같은 품번 두 줄이면 '중복 품번 1개', 합산하지 않는다", async () => {
+    const p = await previewStock(cp949("품번\t재고수량\r\nA\t40\r\nB\t50\r\nA\t60\r\n"), fake.db);
+    expect(p.status).toBe("ok");
+    if (p.status !== "ok") return;
+    expect(p.duplicateCodes).toBe(1);
+    expect(p.errors.filter((e) => e.kind === "DUP").map((e) => e.row)).toEqual([2, 4]);
+    expect(p.fileProducts).toBe(1); // B만 정상
+    expect(p.missing).toBe(2); // 기존 A·C가 이번 파일 정상 행에 없음 → 확인 필요
+  });
 });

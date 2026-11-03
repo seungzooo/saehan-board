@@ -2,7 +2,8 @@
  * 매핑된 행 → DB 저장. seed(CSV 정리본)와 F1 업로드가 같은 함수를 쓴다.
  *
  * 저장 규칙
- * - STOCK: batch 1개 + 전 품목 StockSnapshot. 같은 품번이 여러 행이면 합산(창고별 행 가정).
+ * - STOCK: batch 1개 + 전 품목 StockSnapshot. 같은 품번이 두 행 이상이면 합산하지 않고 그 품번 행 전부를
+ *   "중복 품번" 오류로 제외한다 → 그 품번은 스냅샷이 없어 "확인 필요".
  * - SALES / PRODUCTION: 중복 키(스키마 @@unique)가 같은 행은 건너뛰고 새 행만 넣는다.
  *   같은 기간을 다시 내려받아 올려도 두 번 저장되지 않는다 (createMany skipDuplicates).
  *   ERP에서 수정된 행(수량이 바뀐 같은 전표)은 갱신되지 않는다 — 그 경우는 관리자가 기간 삭제 후 재업로드.
@@ -23,7 +24,7 @@ import { applyMapping, productPrefix, slipTypeCode, toIsoDate, toNumber } from "
 type Db = PrismaClient;
 const CHUNK = 500;
 
-export type RowErrorKind = "CODE" | "QTY" | "OTHER"; // 품번 불일치 / 수량 누락·오류 / 기타
+export type RowErrorKind = "CODE" | "QTY" | "DUP" | "OTHER"; // 품번 불일치 / 수량 누락·오류 / 같은 파일 안 중복 품번 / 기타
 export type RowError = { row: number; message: string; kind: RowErrorKind; code?: string };
 export type ImportResult = {
   ok: true;
@@ -129,9 +130,15 @@ export async function importStock(db: Db, sheet: string[][], ctx: StockImportCtx
   await chunked(codesInFile, async (c) => {
     (await db.product.findMany({ where: { code: { in: c } }, select: { code: true } })).forEach((p) => known.add(p.code));
   });
+  const dupCodes = duplicateCodes(mapped.rows.map((r) => r.productCode));
   for (const r of mapped.rows) {
     const code = r.productCode;
     if (!code) {
+      skipped++;
+      continue;
+    }
+    if (dupCodes.has(code)) {
+      pushErr(errors, r.__row, `중복 품번: ${code} 이(가) 파일에 ${dupCodes.get(code)}줄 — 합산하지 않고 확인 필요로 둡니다`, "DUP", code);
       skipped++;
       continue;
     }
@@ -184,8 +191,15 @@ export async function importStock(db: Db, sheet: string[][], ctx: StockImportCtx
     newCustomers: 0,
     updated: data.length - carried,
     carried,
-    note: mapped.rows.length - skipped !== data.length - carried ? "같은 품번 행은 합산했습니다." : undefined,
+    note: dupCodes.size > 0 ? `중복 품번 ${dupCodes.size}개는 합산하지 않고 "확인 필요"로 두었습니다.` : undefined,
   };
+}
+
+/** 같은 품번이 두 번 이상 나온 품번 → 출현 횟수 */
+export function duplicateCodes(codes: string[]): Map<string, number> {
+  const count = new Map<string, number>();
+  for (const c of codes) if (c) count.set(c, (count.get(c) ?? 0) + 1);
+  return new Map([...count].filter(([, n]) => n > 1));
 }
 
 // ───────────────────────── SALES ─────────────────────────

@@ -11,6 +11,7 @@ import {
   type StockPreview,
   type UploadResponse,
 } from "@/lib/excel/upload";
+import { requirePin } from "@/lib/pin";
 import { revalidatePath } from "next/cache";
 
 const KINDS: UploadKind[] = ["STOCK", "PRODUCTION", "SALES", "PRODUCT", "CUSTOMER"];
@@ -36,12 +37,16 @@ function parseAsOf(formData: FormData): { stockAsOf: Date | null } | { error: st
 
 /** 재고 파일 미리보기 — 저장하지 않는다 */
 export async function previewStockAction(formData: FormData): Promise<StockPreview> {
+  const denied = await requirePin();
+  if (denied) return { status: "error", message: denied };
   const file = fileFrom(formData);
   if ("error" in file) return { status: "error", message: file.error };
   return previewStock(new Uint8Array(await file.arrayBuffer()));
 }
 
 export async function uploadAction(formData: FormData): Promise<UploadResponse> {
+  const denied = await requirePin();
+  if (denied) return { status: "error", message: denied };
   const kind = formData.get("kind");
   if (typeof kind !== "string" || !KINDS.includes(kind as UploadKind)) {
     return { status: "error", message: "업로드 종류가 잘못되었습니다." };
@@ -68,6 +73,8 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
 
 /** 최신 재고 배치를 복구해 직전 기준재고로 되돌린다 */
 export async function revertStockAction(batchId: string): Promise<RevertResult> {
+  const denied = await requirePin();
+  if (denied) return { ok: false, message: denied };
   const r = await revertLatestStock(batchId);
   if (r.ok) revalidateAll();
   return r;
@@ -75,6 +82,8 @@ export async function revertStockAction(batchId: string): Promise<RevertResult> 
 
 /** 업로드 상세의 "이 업로드 취소" */
 export async function cancelBatchAction(batchId: string): Promise<CancelBatchResult> {
+  const denied = await requirePin();
+  if (denied) return { ok: false, message: denied };
   const r = await cancelBatch(batchId);
   if (r.ok) {
     revalidateAll();
