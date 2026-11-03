@@ -13,6 +13,10 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+    // 보호된 Vercel 프리뷰: 프로젝트 설정 > Deployment Protection > Protection Bypass for Automation 값
+    ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+      ? { extraHTTPHeaders: { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET, "x-vercel-set-bypass-cookie": "true" } }
+      : {}),
     ...devices["Pixel 7"],
     viewport: { width: 390, height: 844 },
   },
