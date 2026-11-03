@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ prisma: {} }));
-import { isDiscontinued, packLabel, productInfoText } from "@/lib/stockDisplay";
+import { canJudge, isDiscontinued, isStockStale, packLabel, productInfoText, stockStatus } from "@/lib/stockDisplay";
 
 describe("packLabel — 포장 표시", () => {
   it("박스·파렛트·필름은 단위 이름으로", () => {
@@ -36,5 +36,23 @@ describe("isDiscontinued", () => {
     expect(isDiscontinued("폐기 - 쌀용기 2L")).toBe(true);
     expect(isDiscontinued("  폐기)CJ 1.8L")).toBe(true);
     expect(isDiscontinued("CJ 폐기물 용기")).toBe(false);
+  });
+});
+
+describe("재고 0 · 확인 필요 · 오늘 자료 미반영 구분", () => {
+  const base = { baseline: 0, hasBaseline: true, deductions: { DEFECT: 0, SHIPMENT: 0, ORDER: 0, OTHER: 0 }, todayDeduction: 0 };
+  const now = new Date("2026-11-04T12:00:00+09:00");
+  const fresh = new Date("2026-11-04T09:00:00+09:00");
+  const old = new Date("2026-11-03T09:00:00+09:00"); // 27시간 전 > 24시간
+  it("확인된 실제 0은 재고 없음, 파일에 없으면 확인 필요, 오래된 확인값은 오늘 자료 미반영(판정 보류)", () => {
+    expect(stockStatus({ ...base, available: 0, uploadedAt: fresh, stockAsOf: fresh }, null, now).key).toBe("OUT");
+    expect(stockStatus({ ...base, available: null, uploadedAt: null, stockAsOf: null }, null, now).key).toBe("CHECK");
+    const stale = { ...base, available: 90, uploadedAt: old, stockAsOf: old };
+    expect(stockStatus(stale, null, now)).toMatchObject({ key: "STALE", label: "오늘 자료 미반영" });
+    expect(canJudge(stale, now)).toBe(false);
+    expect(canJudge({ ...stale, uploadedAt: fresh, stockAsOf: fresh }, now)).toBe(true);
+    expect(canJudge({ ...base, available: null, uploadedAt: null, stockAsOf: null }, now)).toBe(false);
+    // 집계 시각이 없으면 반영 시각 기준
+    expect(isStockStale({ ...base, available: 5, uploadedAt: old, stockAsOf: null }, now)).toBe(true);
   });
 });

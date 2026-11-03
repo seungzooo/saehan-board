@@ -39,8 +39,9 @@ function nowSeoulLocal(): string {
 export default function UploadForm({ initialKind }: { initialKind: UploadKind }) {
   const [kind, setKind] = useState<UploadKind>(initialKind);
   const [file, setFile] = useState<File | null>(null);
-  const [asOf, setAsOf] = useState(nowSeoulLocal);
-  const [defectApplied, setDefectApplied] = useState<"yes" | "no">("no");
+  // 집계 기준 시각과 사후 불량 반영 여부는 기본값 없이 담당자가 직접 정한다 (추정하지 않음)
+  const [asOf, setAsOf] = useState("");
+  const [defectApplied, setDefectApplied] = useState<"yes" | "no" | null>(null);
   const [mode, setMode] = useState<StockMode>("REPLACE");
   // (출고·생산실적) 이 파일의 집계 완료 월: 파일을 고르면 자동 제안, 담당자가 바꿀 수 있다
   const [completeMonth, setCompleteMonth] = useState("");
@@ -94,7 +95,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
     fd.set("file", file);
     if (kind === "STOCK") {
       fd.set("stockAsOf", seoulLocalToIso(asOf));
-      fd.set("defectApplied", defectApplied);
+      if (defectApplied) fd.set("defectApplied", defectApplied);
       fd.set("mode", mode);
     }
     if ((kind === "SALES" || kind === "PRODUCTION") && completeMonth) fd.set("completeThrough", completeMonth);
@@ -108,14 +109,15 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
         setFile(null);
         setPreview(null);
         if (inputRef.current) inputRef.current.value = "";
-        setAsOf(nowSeoulLocal());
+        setAsOf("");
+        setDefectApplied(null);
         router.refresh(); // 서버 렌더된 "최근 업로드" 목록·기준 시각 갱신
       }
     });
   }
 
   const previewOk = preview?.status === "ok" ? preview : null;
-  const canSaveStock = kind !== "STOCK" || previewOk !== null;
+  const canSaveStock = kind !== "STOCK" || (previewOk !== null && asOf !== "" && defectApplied !== null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -167,21 +169,28 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
         {kind === "STOCK" && (
           <div className="flex flex-col gap-3 rounded-md bg-zinc-50 p-3">
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-zinc-700">이 파일의 집계 기준 시각</span>
-              <input
-                type="datetime-local"
-                value={asOf}
-                max={nowSeoulLocal()}
-                onChange={(e) => setAsOf(e.target.value)}
-                className="h-11 rounded-md border border-zinc-300 bg-white px-3 text-base"
-              />
+              <span className="text-zinc-700">이 파일의 집계 기준 시각 (필수)</span>
+              <span className="flex gap-2">
+                <input
+                  type="datetime-local"
+                  value={asOf}
+                  max={nowSeoulLocal()}
+                  required
+                  aria-label="집계 기준 시각"
+                  onChange={(e) => setAsOf(e.target.value)}
+                  className="h-11 min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-base"
+                />
+                <button type="button" onClick={() => setAsOf(nowSeoulLocal())} className="h-11 shrink-0 rounded-md border border-zinc-300 bg-white px-3 text-sm">
+                  지금
+                </button>
+              </span>
               <span className="text-xs text-zinc-500">
-                ERP에서 재고를 조회한 시각. 기본값은 지금. 비우면 &ldquo;집계 시각 미확인&rdquo;으로 표시됩니다. 이 시각 이전에 입력한
-                출고·수주는 파일이 이미 반영한 것으로 보고 차감을 해제합니다.
+                ERP에서 재고를 조회한 시각을 직접 넣으세요(파일만으로는 알 수 없어 앱이 추정하지 않습니다). 이 시각 이전에 입력한 출고·수주·기타는
+                파일이 이미 반영한 것으로 보고 차감을 해제하고, 이후 입력분은 계속 차감합니다. 현재 기준보다 이전 시각의 파일은 받지 않습니다.
               </span>
             </label>
             <fieldset className="flex flex-col gap-1 text-sm">
-              <legend className="text-zinc-700">이 파일에 사후 불량이 반영되어 있나요?</legend>
+              <legend className="text-zinc-700">이 파일에 사후 불량이 반영되어 있나요? (필수)</legend>
               <div className="mt-1 grid grid-cols-2 gap-2">
                 {(
                   [
@@ -265,6 +274,26 @@ function PreviewCard({
         기존 대비 신규 {p.added.toLocaleString()} / 변경 {p.changed.toLocaleString()} / 누락 {p.missing.toLocaleString()} 품목
         <span className="ml-1 font-normal text-blue-900">(동일 {p.same.toLocaleString()} · 파일 정상 {p.fileProducts.toLocaleString()})</span>
       </p>
+      {p.previousAsOf && (
+        <p className="text-xs text-blue-900">현재 기준 집계 {formatDateTime(p.previousAsOf)} — 이보다 이전 시각의 파일은 저장되지 않습니다.</p>
+      )}
+      {p.pendingDefects.count > 0 && (
+        <div data-testid="pending-defects" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-950">
+          <p className="font-semibold">
+            직전 기준 이후 입력된 불량 {p.pendingDefects.count.toLocaleString()}건 · {p.pendingDefects.qtyBox.toLocaleString()}박스 (이 파일 품목)
+          </p>
+          <p className="text-xs">이 파일의 집계 시각 전에 입력한 불량이 파일 수량에 이미 빠져 있으면 아래 &ldquo;사후 불량&rdquo;에 &ldquo;예&rdquo;, 아니면 &ldquo;아니오&rdquo;.</p>
+          <ul className="mt-1 text-xs">
+            {p.pendingDefects.items.map((x) => (
+              <li key={x.code} className="num">
+                {x.name}({x.code}): 직전 기준 {x.baseline === null ? "없음" : x.baseline.toLocaleString()} − 불량 {x.defectQty.toLocaleString()} (마지막 입력{" "}
+                {formatDateTime(x.lastAt)}) · 이 파일 {x.fileQty.toLocaleString()}
+                {x.fileMatchesAfterDefect && <b> — 불량을 뺀 수량과 같음</b>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {p.duplicateCodes > 0 && (
         <p data-testid="dup-codes" className="font-semibold text-orange-800">
           중복 품번 {p.duplicateCodes.toLocaleString()}개 — 같은 품번이 두 줄 이상이라 합산하지 않고 &ldquo;확인 필요&rdquo;로 둡니다.

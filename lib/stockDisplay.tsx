@@ -13,11 +13,35 @@ export const NEEDS_CHECK = "확인 필요";
  * 상태 = 색 + 글자 (색만으로 구분하지 않는다)
  *   정상 = 검정 · 곧 소진(소진 3일 이하) = 주황 · 재고 없음(0박스 이하) = 빨강 · 확인 필요 = 회색 점선 테두리
  */
-export type StockStatusKey = "OK" | "LOW" | "OUT" | "CHECK";
+export type StockStatusKey = "OK" | "LOW" | "OUT" | "CHECK" | "STALE";
 export type StockStatus = { key: StockStatusKey; label: string | null; numClass: string; cardClass: string; badgeClass: string };
-export function stockStatus(s: AvailableStock, d?: DaysOfStock | null): StockStatus {
+
+/** 품목 재고의 기준 시각 = 집계 기준 시각, 없으면 파일 반영 시각 */
+export function stockBasisAt(s: AvailableStock): Date | null {
+  const t = s.stockAsOf ?? s.uploadedAt;
+  return t ? new Date(t) : null;
+}
+
+/** 오늘 자료 미반영: 확인된 품목인데 기준 시각이 STALE_AFTER_HOURS보다 오래됨 */
+export function isStockStale(s: AvailableStock, now = new Date()): boolean {
+  const t = stockBasisAt(s);
+  return s.available !== null && t !== null && isStale(t, STALE_AFTER_HOURS, now);
+}
+
+/** 출고 가능 판정을 해도 되는가 — 확인 필요·오늘 자료 미반영이면 보류 */
+export function canJudge(s: AvailableStock, now = new Date()): boolean {
+  return s.available !== null && !isStockStale(s, now);
+}
+
+/**
+ * 우선순위: 확인 필요(최신 파일에 없음) → 오늘 자료 미반영(마지막 확인 수량, 판정 보류) → 재고 없음(0 이하) → 곧 소진 → 정상
+ * "재고 없음"은 확인된 실제 0, "확인 필요"는 모름, "오늘 자료 미반영"은 오래된 확인값 — 셋을 구분한다.
+ */
+export function stockStatus(s: AvailableStock, d?: DaysOfStock | null, now = new Date()): StockStatus {
   if (s.available === null)
     return { key: "CHECK", label: "확인 필요", numClass: "text-zinc-400", cardClass: "border-dashed border-zinc-400", badgeClass: "border border-dashed border-zinc-400 text-zinc-600" };
+  if (isStockStale(s, now))
+    return { key: "STALE", label: "오늘 자료 미반영", numClass: "text-zinc-500", cardClass: "border-amber-300", badgeClass: "bg-amber-100 text-amber-800" };
   if (s.available <= 0)
     return { key: "OUT", label: "재고 없음", numClass: "text-red-600", cardClass: "border-zinc-200", badgeClass: "bg-red-50 text-red-700" };
   if (d && d.days !== null && d.days <= LOW_DAYS_THRESHOLD)

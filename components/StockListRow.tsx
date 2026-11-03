@@ -1,7 +1,7 @@
 import { RECENT_QTY_MONTHS } from "@/config/stock";
 import { shipUnitLabel, type StockListRow as Row } from "@/lib/managed";
 import { formatShort } from "@/lib/format";
-import { DiscontinuedBadge, isDiscontinued } from "@/lib/stockDisplay";
+import { DiscontinuedBadge, isDiscontinued, isStockStale } from "@/lib/stockDisplay";
 import Link from "next/link";
 
 const nf = (v: number) => v.toLocaleString("ko-KR", { maximumFractionDigits: 1 });
@@ -11,6 +11,7 @@ function Badge({ row, lowDays }: { row: Row; lowDays: number }) {
   const parts: { text: string; cls: string }[] = [];
   if (!row.managed) parts.push({ text: "휴면", cls: "bg-zinc-100 text-zinc-600" });
   if (row.stock.available === null) parts.push({ text: "확인 필요", cls: "border border-dashed border-zinc-400 text-zinc-600" });
+  else if (isStockStale(row.stock)) parts.push({ text: "오늘 자료 미반영", cls: "bg-amber-100 text-amber-800" });
   else if (row.stock.available <= 0) parts.push({ text: "재고 없음", cls: "bg-red-50 text-red-700" });
   else if (row.days !== null && row.days <= lowDays) parts.push({ text: "곧 소진", cls: "bg-orange-50 text-orange-700" });
   return (

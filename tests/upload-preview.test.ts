@@ -34,7 +34,7 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown> = 
 }
 
 function makeFakeDb(productNames: Record<string, string>) {
-  const state = { batches: [] as Batch[], snapshots: [] as Snap[] };
+  const state = { batches: [] as Batch[], snapshots: [] as Snap[], adjustments: [] as { productCode: string; qtyBox: number; reason: string; createdAt: Date; cancelledAt: Date | null }[] };
   let seq = 0;
   // 같은 밀리초에 업로드돼도 결정적으로: 시각이 같으면 나중에 넣은 배치가 최신
   const latest = (s: typeof state) =>
@@ -69,6 +69,10 @@ function makeFakeDb(productNames: Record<string, string>) {
       findMany: async ({ where }: { where: { code: { in: string[] } } }) =>
         where.code.in.filter((c) => c in productNames).map((code) => ({ code, name: productNames[code] })),
     },
+    stockAdjustment: {
+      findMany: async ({ where }: { where: { productCode: { in: string[] }; reason: string } }) =>
+        s.adjustments.filter((a) => where.productCode.in.includes(a.productCode) && a.reason === where.reason && !a.cancelledAt),
+    },
     stockSnapshot: {
       createMany: async ({ data }: { data: Snap[] }) => {
         s.snapshots.push(...data);
@@ -86,7 +90,7 @@ function makeFakeDb(productNames: Record<string, string>) {
   const db = {
     ...client(state),
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
-      const draft = { batches: [...state.batches], snapshots: [...state.snapshots] };
+      const draft = { batches: [...state.batches], snapshots: [...state.snapshots], adjustments: state.adjustments };
       const result = await fn(client(draft));
       state.batches = draft.batches;
       state.snapshots = draft.snapshots;
@@ -240,5 +244,54 @@ describe("시연: 재고 90(집계 09:00) → 09:05 불량 5 → 09:12 같은 �
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("기초재고와 당일 변동 — 중복 차감·되돌림 방지 (샘플 시나리오)", () => {
+  const kst = (x: string) => new Date(`${x}+09:00`);
+  it("기초 120 → 불량 30 → 90. 같은 파일 재업로드도 90, 불량이 반영된 다음 기초 90(불량 반영 '예')도 90 — 60이 되지 않는다", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeDb({ A: "에이" });
+      const asOf1 = kst("2026-11-03T09:00:00");
+      vi.setSystemTime(kst("2026-11-03T09:02:00"));
+      expect((await processUpload("STOCK", "d1.xls", cp949("품번\t재고수량\r\nA\t120\r\n"), "t", { stockAsOf: asOf1, defectApplied: false }, fake.db)).status).toBe("saved");
+      const defect = { productCode: "A", qtyBox: 30, reason: "DEFECT", createdAt: kst("2026-11-03T10:00:00"), cancelledAt: null };
+      fake.state.adjustments.push(defect);
+      const now = (snap: Snap, resetAt: Date | null) => computeAvailableStock({ ...snap, defectResetAt: resetAt }, fake.state.adjustments).available;
+      const latestSnap = () => fake.state.snapshots.find((x) => x.batchId === fake.latest()!.id)!;
+      expect(now(latestSnap(), null)).toBe(90);
+
+      // 같은 파일·같은 설정 재업로드 → 중복, 기준 그대로 → 90
+      vi.setSystemTime(kst("2026-11-03T11:00:00"));
+      expect((await processUpload("STOCK", "d1.xls", cp949("품번\t재고수량\r\nA\t120\r\n"), "t", { stockAsOf: asOf1, defectApplied: false }, fake.db)).status).toBe("duplicate");
+      expect(now(latestSnap(), null)).toBe(90);
+
+      // 다음날 기초 90 (ERP가 불량을 이미 반영). 미리보기가 "직전 기준 120 − 불량 30 = 이 파일 90"을 보여준다
+      vi.setSystemTime(kst("2026-11-04T09:05:00"));
+      const file2 = cp949("품번\t재고수량\r\nA\t90\r\n");
+      const p = await previewStock(file2, fake.db);
+      expect(p.status).toBe("ok");
+      if (p.status !== "ok") return;
+      expect(p.pendingDefects).toMatchObject({ count: 1, qtyBox: 30 });
+      expect(p.pendingDefects.items[0]).toMatchObject({ code: "A", baseline: 120, defectQty: 30, fileQty: 90, fileMatchesAfterDefect: true });
+      const asOf2 = kst("2026-11-04T09:00:00");
+      expect((await processUpload("STOCK", "d2.xls", file2, "t", { stockAsOf: asOf2, defectApplied: true }, fake.db)).status).toBe("saved");
+      expect(now(latestSnap(), asOf2)).toBe(90); // 불량 리셋 시점 = 이 파일 집계 시각 → 60이 아니라 90
+      expect(now(latestSnap(), null)).toBe(60); // (대조) 반영 여부를 "아니오"로 답했다면 60 — 그래서 질문을 필수로 받는다
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("과거 파일: 현재 기준보다 이전 집계 시각의 재고 파일은 저장하지 않는다 (같은 시각은 허용)", async () => {
+    const fake = makeFakeDb({ A: "에이" });
+    expect((await processUpload("STOCK", "new.xls", cp949("품번\t재고수량\r\nA\t50\r\n"), "t", { stockAsOf: kst("2026-11-04T09:00:00") }, fake.db)).status).toBe("saved");
+    const old = await processUpload("STOCK", "old.xls", cp949("품번\t재고수량\r\nA\t120\r\n"), "t", { stockAsOf: kst("2026-11-03T09:00:00") }, fake.db);
+    expect(old.status).toBe("error");
+    if (old.status === "error") expect(old.message).toContain("이전 시각");
+    expect(fake.state.batches).toHaveLength(1);
+    const same = await processUpload("STOCK", "same.xls", cp949("품번\t재고수량\r\nA\t48\r\n"), "t", { stockAsOf: kst("2026-11-04T09:00:00"), defectApplied: true }, fake.db);
+    expect(same.status).toBe("saved");
   });
 });

@@ -59,7 +59,11 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
   const asOf = parseAsOf(formData);
   if ("error" in asOf) return { status: "error", message: asOf.error };
 
-  const defectApplied = formData.get("defectApplied") === "yes";
+  // 재고: 집계 기준 시각과 사후 불량 반영 여부는 담당자가 직접 정한다 (파일만으로 반영 범위를 알 수 없으므로 추정하지 않음)
+  if (kind === "STOCK" && !asOf.stockAsOf) return { status: "error", message: "이 파일의 집계 기준 시각(ERP에서 재고를 조회한 시각)을 입력하세요." };
+  const defectRaw = formData.get("defectApplied");
+  if (kind === "STOCK" && defectRaw !== "yes" && defectRaw !== "no") return { status: "error", message: "이 파일에 사후 불량이 반영되어 있는지 선택하세요." };
+  const defectApplied = defectRaw === "yes";
   const mode = formData.get("mode") === "MERGE" ? "MERGE" : "REPLACE";
   const allowRowErrors = formData.get("allowRowErrors") === "1";
   const ct = formData.get("completeThrough");

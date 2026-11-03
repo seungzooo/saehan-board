@@ -13,6 +13,7 @@ import { PRODUCTION_MAPPING, SALES_MAPPING, STOCK_MAPPING, type UploadKind } fro
 import { effectiveCompletion, suggestCompleteMonth, validateCompleteMonth } from "@/lib/analytics/completion";
 import { rebuildMonthlyStat } from "@/lib/analytics/monthlyStat";
 import { prisma } from "@/lib/db";
+import { defectResetAtFor } from "@/lib/defectReset";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import {
   duplicateCodes,
@@ -101,6 +102,17 @@ export async function processUpload(
 
   const uploadedAt = new Date();
   const isStock = kind === "STOCK";
+  if (isStock && options.stockAsOf) {
+    // 과거 파일: 현재 기준보다 이전 시각의 재고 파일을 기준으로 삼으면 수량이 되돌아가고, 그 사이 차감이 다시 살아난다 → 받지 않는다
+    const cur = await latestStockBatch(db);
+    const curAt = cur ? (cur.stockAsOf ?? cur.uploadedAt) : null;
+    if (curAt && options.stockAsOf.getTime() < curAt.getTime()) {
+      return {
+        status: "error",
+        message: `현재 기준(집계 ${formatKst(curAt)})보다 이전 시각(${formatKst(options.stockAsOf)})의 재고 파일입니다. 저장하면 재고가 예전 수량으로 되돌아가므로 받지 않습니다. 집계 기준 시각을 다시 확인하세요.`,
+      };
+    }
+  }
   const stockAsOf = isStock ? (options.stockAsOf ?? null) : null;
   const defectApplied = isStock ? !!options.defectApplied : false;
   const mode: StockMode = isStock && options.mode === "MERGE" ? "MERGE" : "REPLACE";
@@ -190,6 +202,10 @@ export function stockUploadKey(bytes: Uint8Array, options: Pick<UploadOptions, "
   return `${sha256(bytes)}:${createHash("sha256").update(settings).digest("hex").slice(0, 16)}`;
 }
 
+function formatKst(d: Date): string {
+  return new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
+}
+
 async function latestStockBatch(db: PrismaClient) {
   return db.uploadBatch.findFirst({ where: { kind: "STOCK", revertedAt: null }, orderBy: { uploadedAt: "desc" } });
 }
@@ -213,6 +229,14 @@ export type StockPreview =
       changedSample: { code: string; name: string; before: number; after: number }[];
       errors: RowError[];
       errorCount: number;
+      /** 직전 기준 이후 입력된 불량(파일 품목만) — 이 파일이 그 불량을 반영했는지는 담당자가 답한다 */
+      pendingDefects: {
+        count: number;
+        qtyBox: number;
+        items: { code: string; name: string; baseline: number | null; defectQty: number; defectCount: number; lastAt: string; fileQty: number; fileMatchesAfterDefect: boolean }[];
+      };
+      /** 현재 기준 배치의 집계 시각(없으면 반영 시각) — 이보다 이전 시각의 파일은 받지 않는다 */
+      previousAsOf: string | null;
       /** 같은 내용의 파일을 이미 반영한 배치 — 같은 설정이면 저장해도 새로 만들지 않고, 불량 반영·집계 시각을 바꾸면 새 기준이 된다 */
       duplicate: { batchId: string; uploadedAt: string; fileName: string; stockAsOf: string | null; defectApplied: boolean } | null;
       previousBatch: { id: string; fileName: string; uploadedAt: string; products: number } | null;
@@ -285,6 +309,47 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
     } else same++;
   }
   const missingList = [...prevMap.entries()].filter(([code]) => !qty.has(code));
+  // 직전 기준 이후(품목별 불량 리셋 이후) 입력된 불량 — "사후 불량 반영" 질문에 답하는 근거. 추정하지 않고 보여만 준다
+  const fileCodes = [...qty.keys()];
+  const [resetAt, defects] = await Promise.all([
+    defectResetAtFor(db, fileCodes),
+    fileCodes.length
+      ? db.stockAdjustment.findMany({
+          where: { productCode: { in: fileCodes }, reason: "DEFECT", cancelledAt: null },
+          select: { productCode: true, qtyBox: true, createdAt: true },
+        })
+      : Promise.resolve([]),
+  ]);
+  const defectByCode = new Map<string, { qty: number; count: number; last: Date }>();
+  for (const d of defects) {
+    const r = resetAt.get(d.productCode);
+    if (r && d.createdAt <= r) continue;
+    const cur = defectByCode.get(d.productCode) ?? { qty: 0, count: 0, last: d.createdAt };
+    cur.qty += d.qtyBox;
+    cur.count++;
+    if (d.createdAt > cur.last) cur.last = d.createdAt;
+    defectByCode.set(d.productCode, cur);
+  }
+  const pendingItems = [...defectByCode.entries()].map(([code, d]) => {
+    const baseline = prevMap.get(code)?.qtyBox ?? null;
+    const fileQty = Math.round(qty.get(code)!);
+    return {
+      code,
+      name: products.get(code) ?? code,
+      baseline,
+      defectQty: d.qty,
+      defectCount: d.count,
+      lastAt: d.last.toISOString(),
+      fileQty,
+      fileMatchesAfterDefect: baseline !== null && baseline - d.qty === fileQty,
+    };
+  });
+  const pendingDefects = {
+    count: pendingItems.reduce((s, x) => s + x.defectCount, 0),
+    qtyBox: pendingItems.reduce((s, x) => s + x.defectQty, 0),
+    items: pendingItems.slice(0, 10),
+  };
+
   // 같은 파일을 이미 반영한 배치(설정 무관, 가장 최근) — 저장은 막지 않고 안내만
   const dup = await db.uploadBatch.findFirst({
     where: { kind: "STOCK", revertedAt: null, fileHash: { startsWith: sha256(bytes) } },
@@ -304,6 +369,8 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
     changedSample,
     errors,
     errorCount: errors.length,
+    pendingDefects,
+    previousAsOf: prev ? (prev.stockAsOf ?? prev.uploadedAt).toISOString() : null,
     duplicate: dup
       ? { batchId: dup.id, uploadedAt: dup.uploadedAt.toISOString(), fileName: dup.fileName, stockAsOf: dup.stockAsOf?.toISOString() ?? null, defectApplied: dup.defectApplied }
       : null,

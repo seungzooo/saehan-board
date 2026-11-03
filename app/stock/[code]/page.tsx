@@ -61,6 +61,23 @@ export default async function ProductDetailPage({
           {availableText(stock)}
           {!needsCheck && <span className="ml-1 text-xl font-normal text-zinc-500">박스</span>}
         </p>
+        {st.key === "STALE" && (
+          <p data-testid="stale-note" className="mt-1 text-sm font-medium text-amber-800">
+            오늘 자료 미반영 — 마지막으로 확인된 수량과 시각입니다. 출고 가능 여부는 새 재고 파일이 반영된 뒤 판단하세요.
+          </p>
+        )}
+        {!needsCheck && (
+          <p data-testid="order-split" className="num mt-1 text-xs text-zinc-600">
+            {stock.deductions.ORDER !== 0 ? (
+              <>
+                확인 재고 {(stock.available! + stock.deductions.ORDER).toLocaleString()}박스 − 수주 확보 {stock.deductions.ORDER.toLocaleString()}박스 = 현재 재고{" "}
+                {stock.available!.toLocaleString()}박스
+              </>
+            ) : (
+              "확인 재고 기준 (등록된 수주 확보 물량 없음)"
+            )}
+          </p>
+        )}
         <p data-testid="allocation-note" className="mt-1 text-xs text-zinc-500">
           다른 거래처 배정분 반영 여부는 생산지원팀 확인
         </p>
