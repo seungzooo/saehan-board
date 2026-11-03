@@ -5,6 +5,7 @@ import { getStockUniverse } from "@/lib/activity";
 import { buildList, type ListView } from "@/lib/managed";
 import { getStockBasis } from "@/lib/stock";
 import { BasisLine } from "@/lib/stockDisplay";
+import PendingLink from "@/components/PendingLink";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -68,18 +69,18 @@ export default async function StockListPage({ searchParams }: { searchParams: Pr
 
       <nav className="flex flex-wrap gap-1 text-sm" aria-label="목록 종류">
         {(["all", "checked", "unchecked", "low", "dormant", "dormantStock"] as const).map((v) => (
-          <Link
+          <PendingLink
             key={v}
             href={`/stock?view=${v}`}
             className={`flex h-10 items-center rounded-md border px-3 ${view === v ? "border-blue-600 bg-blue-600 font-semibold text-white" : "border-zinc-300 text-zinc-700 hover:bg-blue-50"}`}
           >
             {{ all: "관리 대상", checked: "확인", unchecked: "미확인", low: "곧 소진", dormant: "휴면", dormantStock: "휴면·재고 있음" }[v]}
-          </Link>
+          </PendingLink>
         ))}
       </nav>
 
       <Suspense>
-        <ListControls key={`${view}|${includeDormant}`} initialQuery={q} includeDormant={includeDormant} showToggle={meta.toggle} />
+        <ListControls key={view} initialQuery={q} includeDormant={includeDormant} showToggle={meta.toggle} />
       </Suspense>
 
       {list.items.length === 0 ? (
@@ -97,9 +98,9 @@ export default async function StockListPage({ searchParams }: { searchParams: Pr
       {list.pages > 1 && (
         <nav className="num flex items-center justify-between pt-2 text-sm" aria-label="페이지">
           {list.page > 1 ? (
-            <Link href={pageHref(list.page - 1)} className="flex h-12 items-center rounded-lg border border-zinc-300 px-4 hover:bg-blue-50">
+            <PendingLink href={pageHref(list.page - 1)} className="flex h-12 items-center rounded-lg border border-zinc-300 px-4 hover:bg-blue-50">
               ← 이전
-            </Link>
+            </PendingLink>
           ) : (
             <span />
           )}
@@ -107,9 +108,9 @@ export default async function StockListPage({ searchParams }: { searchParams: Pr
             {list.page} / {list.pages} 페이지 · {((list.page - 1) * LIST_PAGE_SIZE + 1).toLocaleString()}–{Math.min(list.page * LIST_PAGE_SIZE, list.total).toLocaleString()}
           </span>
           {list.page < list.pages ? (
-            <Link href={pageHref(list.page + 1)} className="flex h-12 items-center rounded-lg border border-zinc-300 px-4 hover:bg-blue-50">
+            <PendingLink href={pageHref(list.page + 1)} className="flex h-12 items-center rounded-lg border border-zinc-300 px-4 hover:bg-blue-50">
               다음 →
-            </Link>
+            </PendingLink>
           ) : (
             <span />
           )}

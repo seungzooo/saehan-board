@@ -1,8 +1,11 @@
 "use server";
 
 import type { UploadKind } from "@/config/excel-mapping";
+import { DATA_TAG } from "@/lib/analytics/cached";
 import {
   cancelBatch,
+  suggestCompletion,
+  updateCompletion,
   type CancelBatchResult,
   previewStock,
   processUpload,
@@ -12,7 +15,7 @@ import {
   type UploadResponse,
 } from "@/lib/excel/upload";
 import { requirePin } from "@/lib/pin";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
 const KINDS: UploadKind[] = ["STOCK", "PRODUCTION", "SALES", "PRODUCT", "CUSTOMER"];
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -59,6 +62,8 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
   const defectApplied = formData.get("defectApplied") === "yes";
   const mode = formData.get("mode") === "MERGE" ? "MERGE" : "REPLACE";
   const allowRowErrors = formData.get("allowRowErrors") === "1";
+  const ct = formData.get("completeThrough");
+  const completeThrough = typeof ct === "string" && ct.trim() ? ct.trim() : null;
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const res = await processUpload(kind as UploadKind, file.name, bytes, ACTOR, {
@@ -66,8 +71,13 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
     defectApplied,
     mode,
     allowRowErrors,
+    completeThrough,
   });
-  if (res.status === "saved") revalidateAll();
+  if (res.status === "saved") {
+    // 재고 파일은 실적 집계에 영향이 없다. 그 밖의 업로드는 실적 기반 캐시를 무효화
+    if (kind !== "STOCK") updateTag(DATA_TAG);
+    revalidateAll();
+  }
   return res;
 }
 
@@ -86,8 +96,34 @@ export async function cancelBatchAction(batchId: string): Promise<CancelBatchRes
   if (denied) return { ok: false, message: denied };
   const r = await cancelBatch(batchId);
   if (r.ok) {
+    updateTag(DATA_TAG);
     revalidateAll();
     revalidatePath(`/upload/${batchId}`);
+    revalidatePath("/analytics");
+  }
+  return r;
+}
+
+/** 출고·생산실적 파일을 고르면 집계 완료 월 기본값을 제안 (저장하지 않음) */
+export async function suggestCompletionAction(formData: FormData) {
+  const denied = await requirePin();
+  if (denied) return { ok: false as const, message: denied };
+  const kind = formData.get("kind");
+  if (kind !== "SALES" && kind !== "PRODUCTION") return { ok: false as const, message: "출고실적·생산실적만 해당합니다." };
+  const file = fileFrom(formData);
+  if ("error" in file) return { ok: false as const, message: file.error };
+  return suggestCompletion(kind, new Uint8Array(await file.arrayBuffer()));
+}
+
+/** 업로드 상세에서 집계 완료 월 수정 (PIN 보호) */
+export async function updateCompletionAction(batchId: string, value: string) {
+  const denied = await requirePin();
+  if (denied) return { ok: false as const, message: denied };
+  const r = await updateCompletion(batchId, value);
+  if (r.ok) {
+    updateTag(DATA_TAG);
+    revalidatePath(`/upload/${batchId}`);
+    revalidatePath("/upload");
     revalidatePath("/analytics");
   }
   return r;

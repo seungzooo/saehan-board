@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
+import Spinner from "./Spinner";
 
 /**
  * 재고 검색창 — 상단 고정, 높이 56px, 자동 포커스. 입력 후 300ms 자동 검색, 엔터는 즉시.
- * "휴면 품목 포함" 토글: 기본은 관리 대상만 검색.
+ * "휴면 품목 포함": 상태는 주소(?dormant=1)에 저장 → 새로고침해도 유지.
+ * 누르는 즉시 체크가 바뀌고(useOptimistic) 서버 응답을 기다리는 동안 되돌아가지 않는다. 연속으로 눌러도 마지막 상태가 남는다.
  */
 export default function StockSearchBox({
   initialQuery,
@@ -18,15 +20,21 @@ export default function StockSearchBox({
 }) {
   const router = useRouter();
   const [q, setQ] = useState(initialQuery);
+  const [pending, startTransition] = useTransition();
+  const [dormant, setDormant] = useOptimistic(includeDormant);
+  const wantDormant = useRef(includeDormant); // 연속 클릭 시 가장 최근 의도
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function go(value: string, dormant = includeDormant) {
+  function go(value: string, nextDormant = wantDormant.current) {
     const v = value.trim();
     const p = new URLSearchParams();
     if (v) p.set("q", v);
-    if (dormant) p.set("dormant", "1");
+    if (nextDormant) p.set("dormant", "1");
     const s = p.toString();
-    router.replace(s ? `${basePath}?${s}` : basePath);
+    startTransition(() => {
+      setDormant(nextDormant);
+      router.replace(s ? `${basePath}?${s}` : basePath, { scroll: false });
+    });
   }
 
   useEffect(() => {
@@ -61,19 +69,32 @@ export default function StockSearchBox({
           enterKeyHint="search"
           className="h-14 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-4 text-lg outline-none focus:border-blue-600"
         />
-        <button type="submit" className="h-14 shrink-0 rounded-lg bg-blue-600 px-5 text-base font-semibold text-white">
-          검색
+        <button
+          type="submit"
+          aria-busy={pending}
+          data-testid="search-button"
+          className="flex h-14 w-20 shrink-0 items-center justify-center gap-1 rounded-lg bg-blue-600 text-base font-semibold text-white"
+        >
+          {pending ? <Spinner label="검색 중" /> : "검색"}
         </button>
       </div>
-      <label className="mt-1 inline-flex min-h-8 cursor-pointer items-center gap-2 text-sm text-zinc-600">
+      <label className="mt-1 inline-flex min-h-10 cursor-pointer select-none items-center gap-2 pr-2 text-sm text-zinc-700" data-testid="dormant-label">
         <input
           type="checkbox"
-          checked={includeDormant}
-          onChange={(e) => go(q, e.target.checked)}
-          className="h-4 w-4 accent-blue-600"
+          checked={dormant}
+          onChange={(e) => {
+            wantDormant.current = e.target.checked;
+            go(q, e.target.checked);
+          }}
+          className="h-5 w-5 accent-blue-600"
           data-testid="dormant-toggle"
         />
         휴면 품목 포함
+        {pending && (
+          <span className="text-zinc-500" data-testid="search-pending">
+            <Spinner label="적용 중" />
+          </span>
+        )}
       </label>
     </form>
   );

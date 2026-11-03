@@ -182,3 +182,14 @@ export function describeComparison(c: Comparison, boxSize: number | null): strin
   const pct = `${c.pct >= 0 ? "+" : "−"}${Math.abs(c.pct).toFixed(1)}%`;
   return [a, b, `${label} ${pct}`];
 }
+
+export type YearChoice = number | "all";
+
+/** ?year= 해석: 숫자면 그 해(자료 있는 해만), "all"이면 전체 기간, 없으면 자료가 있는 최신 연도 */
+export function parseYear(raw: string | null | undefined, ctx: PeriodContext): YearChoice {
+  const years = yearsOf(ctx);
+  if (raw === "all") return "all";
+  const n = Number(raw);
+  if (Number.isInteger(n) && years.includes(n)) return n;
+  return years.at(-1) ?? "all";
+}

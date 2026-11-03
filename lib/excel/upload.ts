@@ -9,7 +9,8 @@
  *   previewStock()으로 저장 전에 기존 대비 신규/변경/누락을 보여주고, revertLatestStock()으로 직전 기준으로 복구한다.
  */
 import { createHash } from "node:crypto";
-import { STOCK_MAPPING, type UploadKind } from "@/config/excel-mapping";
+import { PRODUCTION_MAPPING, SALES_MAPPING, STOCK_MAPPING, type UploadKind } from "@/config/excel-mapping";
+import { effectiveCompletion, suggestCompleteMonth, validateCompleteMonth } from "@/lib/analytics/completion";
 import { rebuildMonthlyStat } from "@/lib/analytics/monthlyStat";
 import { prisma } from "@/lib/db";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
@@ -24,7 +25,7 @@ import {
   type ImportResult,
   type RowError,
 } from "./import";
-import { applyMapping, toNumber } from "./mapping";
+import { applyMapping, toIsoDate, toNumber } from "./mapping";
 import { parseWorkbookBytes } from "./parse";
 
 export type StockMode = "REPLACE" | "MERGE";
@@ -38,6 +39,8 @@ export type UploadOptions = {
   mode?: StockMode;
   /** 행 오류가 있어도 그대로 저장 (담당자 확인 후) */
   allowRowErrors?: boolean;
+  /** (SALES·PRODUCTION) 이 파일의 집계 완료 월 YYYY-MM. 비우면 파일 마지막 날짜로 자동 제안한 값 */
+  completeThrough?: string | null;
 };
 
 export type UploadResponse =
@@ -127,6 +130,17 @@ export async function processUpload(
         }
         if (!r.ok) throw new MappingError(r.missing, r.headerFound);
         if (r.errors.length > 0 && !options.allowRowErrors) throw new RowErrorsAbort(r.errors, r.inserted);
+        if (kind === "SALES" || kind === "PRODUCTION") {
+          // 집계 완료 월: 담당자 입력값, 없으면 파일 마지막 날짜로 제안. 파일의 마지막 달보다 늦을 수 없다
+          const lastDate = r.period?.to ?? null;
+          const value = options.completeThrough?.trim() || (lastDate ? suggestCompleteMonth(lastDate) : null);
+          if (value) {
+            const bad = validateCompleteMonth(value, lastDate ? lastDate.slice(0, 7) : null);
+            if (bad) throw new Error(bad);
+            await tdb.uploadBatch.update({ where: { id: batch.id }, data: { completeThrough: value, completeThroughSetAt: new Date() } });
+          }
+          r = { ...r, completeThrough: value } as typeof r;
+        }
         if (kind === "SALES" || kind === "PRODUCTION" || kind === "CUSTOMER") await rebuildMonthlyStat(tdb);
         return { batchId: batch.id, result: r };
       },
@@ -349,13 +363,23 @@ export async function getBatchDetail(id: string, db: PrismaClient = prisma) {
   }
   if (batch.kind === "SALES" || batch.kind === "PRODUCTION") {
     const table = batch.kind === "SALES" ? db.shipmentHistory : db.productionHistory;
-    const [count, range] = await Promise.all([
+    const [count, range, all, siblings] = await Promise.all([
       (table as typeof db.shipmentHistory).count({ where: { batchId: batch.id } }),
       (table as typeof db.shipmentHistory).aggregate({ where: { batchId: batch.id }, _min: { date: true }, _max: { date: true } }),
+      (table as typeof db.shipmentHistory).aggregate({ _max: { yearMonth: true } }),
+      db.uploadBatch.findMany({
+        where: { kind: batch.kind },
+        select: { id: true, kind: true, fileName: true, uploadedAt: true, completeThrough: true, revertedAt: true },
+      }),
     ]);
+    const effective = effectiveCompletion(siblings, batch.kind as "SALES" | "PRODUCTION");
     return {
       batch,
       kind: batch.kind as "SALES" | "PRODUCTION",
+      // 기존 정리본(seed) 배치는 행에 batchId가 없으므로 그 실적 전체의 마지막 달
+      lastDataYm: range._max.date ? range._max.date.toISOString().slice(0, 7) : (all._max.yearMonth ?? null),
+      isEffectiveCompletion: effective?.id === batch.id,
+      effectiveCompletion: effective ? { id: effective.id, fileName: effective.fileName, completeThrough: effective.completeThrough } : null,
       inserted: count,
       skipped: Math.max(0, batch.rowCount - count),
       period: range._min.date && range._max.date ? { from: range._min.date.toISOString().slice(0, 10), to: range._max.date.toISOString().slice(0, 10) } : null,
@@ -404,4 +428,49 @@ export async function cancelBatch(id: string, db: PrismaClient = prisma): Promis
     return { ok: true, message: `취소 완료. 이 업로드로 추가된 ${deleted.toLocaleString()}행을 지우고 월별 집계를 다시 계산했습니다.` };
   }
   return { ok: false, message: "제품·거래처 마스터는 취소할 수 없습니다." };
+}
+
+// ───────────────────────── 집계 완료 월 ─────────────────────────
+
+/** 파일 안 마지막 날짜와 기본 제안 집계 완료 월 (저장하지 않는다) */
+export async function suggestCompletion(
+  kind: "SALES" | "PRODUCTION",
+  bytes: Uint8Array,
+): Promise<{ ok: true; lastDate: string; suggestion: string } | { ok: false; message: string }> {
+  let parsed;
+  try {
+    parsed = parseWorkbookBytes(bytes);
+  } catch (e) {
+    return { ok: false, message: `파일을 읽을 수 없습니다: ${(e as Error).message}` };
+  }
+  // 날짜 컬럼만 본다 (출고일자 / 생산일자)
+  const mapped = applyMapping(parsed.rows, { date: kind === "SALES" ? SALES_MAPPING.date : PRODUCTION_MAPPING.date });
+  if (!mapped.ok) return { ok: false, message: `날짜 컬럼을 찾지 못했습니다 (${mapped.missing.join(", ")})` };
+  let last: string | null = null;
+  for (const r of mapped.rows) {
+    const d = toIsoDate(r.date);
+    if (d && (!last || d > last)) last = d;
+  }
+  if (!last) return { ok: false, message: "파일에서 날짜를 찾지 못했습니다." };
+  return { ok: true, lastDate: last, suggestion: suggestCompleteMonth(last) };
+}
+
+/** 업로드 배치의 집계 완료 월 수정. 그 배치가 담은 자료의 마지막 달보다 늦을 수 없다 */
+export async function updateCompletion(
+  batchId: string,
+  value: string,
+  db: PrismaClient = prisma,
+): Promise<{ ok: true; value: string } | { ok: false; message: string }> {
+  const batch = await db.uploadBatch.findUnique({ where: { id: batchId } });
+  if (!batch) return { ok: false, message: "업로드를 찾을 수 없습니다." };
+  if (batch.kind !== "SALES" && batch.kind !== "PRODUCTION") return { ok: false, message: "출고실적·생산실적 업로드만 집계 완료 월이 있습니다." };
+  if (batch.revertedAt) return { ok: false, message: "취소된 업로드입니다." };
+  // 기존 정리본 배치(seed)는 행에 batchId가 없으므로 그 실적 전체의 마지막 달로 검사
+  const table = batch.kind === "SALES" ? db.shipmentHistory : db.productionHistory;
+  const own = await (table as typeof db.shipmentHistory).aggregate({ where: { batchId }, _max: { yearMonth: true } });
+  const all = own._max.yearMonth ? own : await (table as typeof db.shipmentHistory).aggregate({ _max: { yearMonth: true } });
+  const bad = validateCompleteMonth(value.trim(), all._max.yearMonth ?? null);
+  if (bad) return { ok: false, message: bad };
+  await db.uploadBatch.update({ where: { id: batchId }, data: { completeThrough: value.trim(), completeThroughSetAt: new Date() } });
+  return { ok: true, value: value.trim() };
 }

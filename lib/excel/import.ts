@@ -36,6 +36,7 @@ export type ImportResult = {
   updated?: number; // 마스터 업로드: 기존 행 갱신 수 / 재고: 기존 품목 수
   duplicates?: number; // 실적 업로드: 이미 있어 건너뛴 행
   carried?: number; // 재고 MERGE: 파일에 없어 직전 배치에서 이월한 품목 수
+  completeThrough?: string | null; // 출고·생산실적: 저장된 집계 완료 월
   warnings?: string[]; // 저장은 됐지만 확인이 필요한 사항
   period?: { from: string; to: string };
   note?: string;

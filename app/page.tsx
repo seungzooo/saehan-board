@@ -21,8 +21,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pb-8">
       <StockSearchBox initialQuery={q} includeDormant={includeDormant} />
-      <BasisLine basis={basis} />
-      {query ? <Results q={query} includeDormant={includeDormant} /> : <Dashboard />}
+      {query ? (
+        <>
+          <BasisLine basis={basis} />
+          <Results q={query} includeDormant={includeDormant} />
+        </>
+      ) : (
+        <Dashboard basis={basis} />
+      )}
     </main>
   );
 }
@@ -53,6 +59,7 @@ async function Results({ q, includeDormant }: { q: string; includeDormant: boole
         {hint}
         <div className="py-10 text-center">
           <p className="text-base font-semibold">일치하는 품목 없음</p>
+          <p className="text-sm text-zinc-500">다른 검색어를 입력하세요.</p>
           <p className="mt-1 text-sm text-zinc-500">
             &ldquo;{q}&rdquo; — 품번 일부나 용량(예: 2L)으로 다시 찾아보세요.{!includeDormant && " 기본 검색은 관리 대상만 찾습니다."}
           </p>
@@ -96,7 +103,7 @@ async function Results({ q, includeDormant }: { q: string; includeDormant: boole
   );
 }
 
-async function Dashboard() {
+async function Dashboard({ basis: stockBasis }: { basis: Awaited<ReturnType<typeof getStockBasis>> }) {
   const [{ basis, rows, summary: s }, today] = await Promise.all([getHomeSummary(), getTodayActivity()]);
   const uncheckedPct = s.managed > 0 ? (s.unchecked / s.managed) * 100 : 0;
   const low = sortRows(
@@ -110,18 +117,20 @@ async function Dashboard() {
     : null;
   return (
     <>
-      <p className="text-center text-sm text-zinc-500">검색어를 입력하세요</p>
-
-      <p data-testid="active-period" className="num rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-        {basis ? (
-          <>
-            관리 대상 = <b>{basis.fromYm} ~ {basis.basisYm}</b>(최근 {ACTIVE_MONTHS}개 달)에 정상·내수 출고가 있는 품목 · 최신 정상·내수 출고일{" "}
-            <b>{basis.latestShipDate}</b>
-          </>
-        ) : (
-          "정상·내수 출고실적이 없어 관리 대상을 정할 수 없습니다."
-        )}
-      </p>
+      {/* 재고 기준(집계·반영 시각)과 관리 대상 기준을 한 블록으로 */}
+      <div data-testid="active-period" className="num flex flex-col gap-1 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+        <BasisLine basis={stockBasis} />
+        <p>
+          {basis ? (
+            <>
+              관리 대상 = <b>{basis.fromYm} ~ {basis.basisYm}</b>(최근 {ACTIVE_MONTHS}개 달)에 정상·내수 출고가 있는 품목 · 최신 정상·내수 출고일{" "}
+              <b>{basis.latestShipDate}</b>
+            </>
+          ) : (
+            "정상·내수 출고실적이 없어 관리 대상을 정할 수 없습니다."
+          )}
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="home-counts">
         <Tile href="/stock?view=all" label="관리 대상" value={s.managed} sub={`등록 ${s.registered.toLocaleString()} 중`} testid="count-managed" />

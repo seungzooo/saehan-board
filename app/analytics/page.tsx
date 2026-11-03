@@ -1,15 +1,8 @@
 import { ChartHead, LagChart, ReturnsChart, SeasonChart, TrendChart } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
-import { allSeries, boxSizeOf, formatUnits, type PeriodContext } from "@/lib/analytics/periods";
-import {
-  getAnalysisBasis,
-  getOverview,
-  getProductAnalysis,
-  MAX_LAG,
-  searchAnalysisProducts,
-  TREND_MONTHS,
-  type AnalysisBasis,
-} from "@/lib/analytics/query";
+import { cachedAnalysisBasis, cachedCompletionInfo, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
+import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
+import { getLiveStock, MAX_LAG, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
 import {
   describeLagCalendar,
   describeNow,
@@ -20,10 +13,11 @@ import {
   yearlySeasonal,
   type LagRow,
 } from "@/lib/analytics/seasonal";
-import { getMonthlyUnits, getPeriodContext } from "@/lib/analytics/shipments";
+import { contextOf, unitsOf, type CompletionInfo, type PeriodData } from "@/lib/analytics/shipments";
+import { formatDateTime } from "@/lib/format";
 import { availableText, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
 import Link from "next/link";
-import ShipmentSection, { parseYear, type YearChoice } from "./ShipmentSection";
+import ShipmentSection from "./ShipmentSection";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +28,8 @@ export const dynamic = "force-dynamic";
  */
 export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ code?: string; q?: string; seg?: string; year?: string }> }) {
   const sp = await searchParams;
-  const [basis, ctx] = await Promise.all([getAnalysisBasis(), getPeriodContext()]);
+  const [basis, period, completion] = await Promise.all([cachedAnalysisBasis(), cachedPeriodData(), cachedCompletionInfo()]);
+  const ctx = contextOf(period);
   const q = sp.q?.trim() ?? "";
   const year = parseYear(sp.year, ctx);
   const link = (params: Record<string, string | undefined>) => {
@@ -55,7 +50,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
             </Link>
           )}
         </div>
-        <BasisNote basis={basis} ctx={ctx} />
+        <BasisNote basis={basis} ctx={ctx} completion={completion} />
         <form action="/analytics" className="flex gap-2">
           <input
             type="search"
@@ -75,21 +70,42 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
       {q && !sp.code ? (
         <SearchResults q={q} link={link} />
       ) : sp.code ? (
-        <ProductView code={sp.code} ctx={ctx} year={year} hrefFor={(y) => link({ code: sp.code, year: String(y) })} />
+        <ProductView code={sp.code} period={period} year={year} />
       ) : (
-        <Overview ctx={ctx} year={year} hrefFor={(y) => link({ year: String(y) })} link={link} />
+        <Overview period={period} year={year} link={link} />
       )}
     </main>
   );
 }
 
-function BasisNote({ basis, ctx }: { basis: AnalysisBasis; ctx: PeriodContext }) {
+function BasisNote({ basis, ctx, completion }: { basis: AnalysisBasis; ctx: PeriodContext; completion: CompletionInfo }) {
+  const src = completion.sales;
   return (
-    <p className="num text-xs text-zinc-500" data-testid="analysis-basis">
-      실적 기준: 정상 출고 {basis.shipmentTo ?? "없음"} · 생산 {basis.productionTo ?? "없음"} · 출고 자료 {ctx.firstYm ?? "없음"}~{ctx.lastYm ?? ""}
-      {ctx.completeThrough ? `, 집계 완료 ${ctx.completeThrough}까지` : ", 집계 완료 달 확인 불가"}. 판매 = 정상 출고(판매형태 전체), 반품 별도. 거래처 유형(B2B/B2C)
-      구분은 회사 분류표 확인 전까지 쓰지 않습니다.
-    </p>
+    <div className="num flex flex-col gap-0.5 text-xs text-zinc-500" data-testid="analysis-basis">
+      <p>
+        실적 기준: 정상 출고 {basis.shipmentTo ?? "없음"} · 생산 {basis.productionTo ?? "없음"} · 출고 자료 {ctx.firstYm ?? "없음"}~{ctx.lastYm ?? ""}. 판매 = 정상
+        출고(판매형태 전체), 반품 별도. 거래처 유형(B2B/B2C) 구분은 회사 분류표 확인 전까지 쓰지 않습니다.
+      </p>
+      <p data-testid="completion-source">
+        {ctx.completeThrough ? (
+          <>
+            <b className="text-zinc-700">집계 완료 {ctx.completeThrough}까지</b>
+            {src && (
+              <>
+                {" "}
+                — 출고실적 업로드{" "}
+                <Link href={`/upload/${src.id}`} className="text-blue-600 underline">
+                  {src.fileName}
+                </Link>{" "}
+                ({formatDateTime(new Date(src.uploadedAt))})에서 정함
+              </>
+            )}
+          </>
+        ) : (
+          "집계 완료 월이 정해진 출고실적 업로드가 없어 마지막 달은 집계 중으로 봅니다."
+        )}
+      </p>
+    </div>
   );
 }
 
@@ -153,8 +169,8 @@ async function SearchResults({ q, link }: { q: string; link: (p: Record<string, 
   );
 }
 
-async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: PeriodContext; year: YearChoice; hrefFor: (y: YearChoice) => string }) {
-  const [a, units] = await Promise.all([getProductAnalysis(code, "ALL"), getMonthlyUnits(code)]);
+async function ProductView({ code, period, year }: { code: string; period: PeriodData; year: YearChoice }) {
+  const [a, unitsData, live] = await Promise.all([cachedProductAnalysis(code), cachedMonthlyUnits(code), getLiveStock([code])]);
 
   // 월별 출고량은 생산 기록과 무관하게 보여 준다. 교집합 조건은 생산·판매 비교 분석에만 적용
   const product = a.ok ? a.product : a.product;
@@ -162,7 +178,14 @@ async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: Pe
   const boxSize = boxSizeOf(product.packUnit, product.unitsPerBox);
 
   const shipment = (
-    <ShipmentSection ctx={ctx} units={units} year={year} hrefFor={hrefFor} scope={`${product.name} (${product.code})`} boxSize={boxSize} />
+    <ShipmentSection
+      period={period}
+      data={unitsData}
+      initialYear={year}
+      scope={`${product.name} (${product.code})`}
+      boxSize={boxSize}
+      keepParams={{ code: product.code }}
+    />
   );
 
   if (!a.ok) {
@@ -187,8 +210,10 @@ async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: Pe
     );
   }
 
-  const st = stockStatus(a.stock, a.days);
-  const nowRow = a.seasonal[a.currentMonth - 1];
+  const { stock, days } = live.get(code)!;
+  const currentMonth = seoulMonth();
+  const st = stockStatus(stock, days);
+  const nowRow = a.seasonal[currentMonth - 1];
   const peaks = a.seasonal.filter((r) => (r.index ?? 0) >= PEAK_INDEX).map((r) => r.month);
   const range = a.seasonRange ? `${a.seasonRange.from}~${a.seasonRange.to}` : "자료 없음";
   const lagRange = a.lagRange ? `${a.lagRange.from}~${a.lagRange.to}` : "자료 없음";
@@ -207,18 +232,18 @@ async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: Pe
           <div>
             <p className="text-xs text-zinc-500">현재 재고</p>
             <p className={`num text-5xl font-bold leading-none ${st.numClass}`}>
-              {availableText(a.stock)}
-              {a.stock.available !== null && <span className="ml-1 text-base font-normal text-zinc-500">박스</span>}
+              {availableText(stock)}
+              {stock.available !== null && <span className="ml-1 text-base font-normal text-zinc-500">박스</span>}
             </p>
           </div>
           <div className="text-right">
             <StatusBadge status={st} />
             <p className="num mt-1 text-sm">
-              예상 소진 <b>{daysText(a.days)}</b>
+              예상 소진 <b>{daysText(days)}</b>
             </p>
           </div>
         </div>
-        <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium">{describeNow(nowRow.index, a.currentMonth, a.days.days)}</p>
+        <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium">{describeNow(nowRow.index, currentMonth, days.days)}</p>
         <p className="mt-1 text-xs text-zinc-500">재고·소진일수는 재고 관리 기준(정상·내수), 아래 분석은 정상 출고 전체 기준입니다.</p>
       </section>
 
@@ -258,9 +283,9 @@ async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: Pe
             {a.seasonal.map((r) => {
               const peak = peaks.includes(r.month);
               return (
-                <tr key={r.month} className={r.month === a.currentMonth ? "bg-blue-50" : ""}>
+                <tr key={r.month} className={r.month === currentMonth ? "bg-blue-50" : ""}>
                   <td className="px-3 py-2">
-                    {r.month}월{r.month === a.currentMonth && <span className="ml-1 text-xs text-blue-700">이번 달</span>}
+                    {r.month}월{r.month === currentMonth && <span className="ml-1 text-xs text-blue-700">이번 달</span>}
                   </td>
                   <td className={`px-3 py-2 text-right ${peak ? "font-bold text-blue-800" : ""}`}>
                     {r.index === null ? "—" : r.index.toFixed(2)}
@@ -298,18 +323,11 @@ async function ProductView({ code, ctx, year, hrefFor }: { code: string; ctx: Pe
   );
 }
 
-async function Overview({
-  ctx,
-  year,
-  hrefFor,
-  link,
-}: {
-  ctx: PeriodContext;
-  year: YearChoice;
-  hrefFor: (y: YearChoice) => string;
-  link: (p: Record<string, string | undefined>) => string;
-}) {
-  const [o, units] = await Promise.all([getOverview("ALL"), getMonthlyUnits()]);
+async function Overview({ period, year, link }: { period: PeriodData; year: YearChoice; link: (p: Record<string, string | undefined>) => string }) {
+  const [o, unitsData] = await Promise.all([cachedOverview(), cachedMonthlyUnits(null)]);
+  const live = await getLiveStock(o.top.map((t) => t.code));
+  const ctx = contextOf(period);
+  const units = unitsOf(unitsData);
 
   // 연×월 히트맵: 전체 거래처 정상 출고(낱개). 집계 완료 달만 값, 나머지는 자료 없음
   const pts = allSeries(units.normal, ctx);
@@ -328,7 +346,7 @@ async function Overview({
 
   return (
     <>
-      <ShipmentSection ctx={ctx} units={units} year={year} hrefFor={hrefFor} scope="전체 거래처" boxSize={null} />
+      <ShipmentSection period={period} data={unitsData} initialYear={year} scope="전체 거래처" boxSize={null} />
 
       <section data-testid="year-heatmap">
         <ChartHead title="연도별 계절지수 — 전체 거래처 정상 출고" unit="지수 (기준 1)" basis={`분석 기간 ${heatRange} · 연도 버튼과 무관`} />
@@ -373,7 +391,8 @@ async function Overview({
               <tbody className="divide-y divide-zinc-200">
                 {o.top.map((r) => {
                   const href = link({ code: r.code });
-                  const st = stockStatus(r.stock, r.days);
+                  const { stock, days } = live.get(r.code)!;
+                  const st = stockStatus(stock, days);
                   return (
                     <tr key={r.code} className="hover:bg-blue-50">
                       <td className="truncate px-2 py-0">
@@ -393,12 +412,12 @@ async function Overview({
                       </td>
                       <td className={`px-2 py-0 text-right ${st.numClass}`}>
                         <Link href={`/stock/${encodeURIComponent(r.code)}`} className="block py-3 text-xs">
-                          {availableText(r.stock)}
+                          {availableText(stock)}
                         </Link>
                       </td>
                       <td className="px-2 py-0 text-right text-xs">
                         <Link href={`/stock/${encodeURIComponent(r.code)}`} className="block py-3">
-                          {daysText(r.days)}
+                          {daysText(days)}
                         </Link>
                       </td>
                     </tr>

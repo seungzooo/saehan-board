@@ -48,6 +48,8 @@ model UploadBatch {
   defectApplied Boolean   @default(false) // (STOCK) 파일에 사후 불량이 반영되어 있음 → 이전 불량 차감 리셋
   mode          String    @default("REPLACE") // (STOCK) REPLACE 전체 교체 | MERGE 있는 품목만 갱신(나머지는 직전 배치에서 이월)
   revertedAt    DateTime? // (STOCK) "이전 기준재고로 복구" 시각. 복구된 배치는 기준점에서 제외
+  completeThrough      String? // (SALES·PRODUCTION) 이 파일로 집계 완료가 확인된 마지막 달 YYYY-MM — 담당자 입력(기본 자동 제안)
+  completeThroughSetAt DateTime? // 위 값을 마지막으로 정하거나 고친 시각
 
   snapshots   StockSnapshot[]
   productions ProductionHistory[]

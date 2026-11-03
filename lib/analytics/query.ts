@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/db";
 import type { AvailableStock } from "@/lib/availableStock";
 import { getMonthlyUnits } from "./shipments";
+import { effectiveCompletion } from "./completion";
 import { computeForProducts, daysOfStock, getShipmentRates, type DaysOfStock } from "@/lib/stock";
 import {
   bestLag,
@@ -78,13 +79,25 @@ export async function getAnalysisBasis(): Promise<AnalysisBasis> {
     prisma.shipmentHistory.aggregate({ _min: { yearMonth: true }, _max: { yearMonth: true } }),
     prisma.productionHistory.aggregate({ _max: { date: true }, _min: { yearMonth: true } }),
   ]);
-  const pMaxYm = await prisma.productionHistory.aggregate({ _max: { yearMonth: true } });
+  const [pMaxYm, batches] = await Promise.all([
+    prisma.productionHistory.aggregate({ _max: { yearMonth: true } }),
+    prisma.uploadBatch.findMany({
+      where: { kind: { in: ["SALES", "PRODUCTION"] } },
+      select: { id: true, kind: true, fileName: true, uploadedAt: true, completeThrough: true, revertedAt: true },
+    }),
+  ]);
   const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+  // 시차 상관의 자료 범위 끝 = 실제 마지막 달과 그 실적의 집계 완료 월 중 이른 쪽
+  const clip = (to: string, done: string | null | undefined) => (done && done < to ? done : to);
+  const salesDone = effectiveCompletion(batches, "SALES")?.completeThrough ?? null;
+  const prodDone = effectiveCompletion(batches, "PRODUCTION")?.completeThrough ?? null;
   return {
     shipmentTo: iso(s._max.date),
     productionTo: iso(p._max.date),
-    salesCoverage: sAll._min.yearMonth && sAll._max.yearMonth ? { from: sAll._min.yearMonth, to: sAll._max.yearMonth } : null,
-    productionCoverage: p._min.yearMonth && pMaxYm._max.yearMonth ? { from: p._min.yearMonth, to: pMaxYm._max.yearMonth } : null,
+    salesCoverage:
+      sAll._min.yearMonth && sAll._max.yearMonth ? { from: sAll._min.yearMonth, to: clip(sAll._max.yearMonth, salesDone) } : null,
+    productionCoverage:
+      p._min.yearMonth && pMaxYm._max.yearMonth ? { from: p._min.yearMonth, to: clip(pMaxYm._max.yearMonth, prodDone) } : null,
   };
 }
 
@@ -122,13 +135,12 @@ type ProductLite = { code: string; name: string; capacity: string | null; packUn
 
 // ───────────────────────── 품목 분석 ─────────────────────────
 
-export type ProductAnalysis =
+/** 실적에서만 나오는 품목 분석 — 캐시 대상 (재고·이번 달은 제외) */
+export type ProductAnalysisStatic =
   | {
       ok: true;
       basis: AnalysisBasis;
       product: ProductLite;
-      stock: AvailableStock;
-      days: DaysOfStock;
       /** 최근 24개월 생산·정상 판매·반품, 모두 낱개 (화면에서 박스 환산 여부 결정) */
       trend: { yearMonth: string; production: number; shipment: number; returns: number }[];
       returnsTotal: number; // 낱개
@@ -137,13 +149,12 @@ export type ProductAnalysis =
       yearly: YearRow[];
       lags: LagRow[];
       best: LagRow | null;
-      currentMonth: number;
       seasonRange: { from: string; to: string } | null;
       lagRange: { from: string; to: string } | null;
     }
   | { ok: false; reason: "NOT_FOUND" | "NO_PRODUCTION" | "NO_SHIPMENT"; product?: ProductLite };
 
-export async function getProductAnalysis(code: string, seg: Segment, now = new Date()): Promise<ProductAnalysis> {
+export async function getProductAnalysisStatic(code: string, seg: Segment = "ALL"): Promise<ProductAnalysisStatic> {
   const product = await prisma.product.findUnique({
     where: { code },
     select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
@@ -186,15 +197,10 @@ export async function getProductAnalysis(code: string, seg: Segment, now = new D
     MAX_LAG,
   );
 
-  const [stocks, rates] = await Promise.all([computeForProducts([code]), getShipmentRates([code])]);
-  const stock = stocks.get(code)!;
-  const seoulMonth = Number(new Date(now.getTime() + 9 * 3600_000).toISOString().slice(5, 7));
   return {
     ok: true,
     basis,
     product,
-    stock,
-    days: daysOfStock(stock, rates.get(code) ?? null, rates.basisTo),
     trend,
     returnsTotal: trend.reduce((s, t) => s + t.returns, 0),
     normalTotal: trend.reduce((s, t) => s + t.shipment, 0),
@@ -202,15 +208,30 @@ export async function getProductAnalysis(code: string, seg: Segment, now = new D
     yearly,
     lags,
     best: bestLag(lags),
-    currentMonth: seoulMonth,
     seasonRange: sm.length ? { from: sm[0], to: sm[sm.length - 1] } : null,
     lagRange: um.length ? { from: um[0], to: um[um.length - 1] } : null,
   };
 }
 
+/** 실시간 재고·소진일수 (캐시하지 않는다) */
+export async function getLiveStock(codes: string[]): Promise<Map<string, { stock: AvailableStock; days: DaysOfStock }>> {
+  const [stocks, rates] = await Promise.all([computeForProducts(codes), getShipmentRates(codes)]);
+  const out = new Map<string, { stock: AvailableStock; days: DaysOfStock }>();
+  for (const c of codes) {
+    const stock = stocks.get(c)!;
+    out.set(c, { stock, days: daysOfStock(stock, rates.get(c) ?? null, rates.basisTo) });
+  }
+  return out;
+}
+
+/** 서울 기준 이번 달 (1~12) */
+export function seoulMonth(now = new Date()): number {
+  return Number(new Date(now.getTime() + 9 * 3600_000).toISOString().slice(5, 7));
+}
+
 // ───────────────────────── 전체 요약 ─────────────────────────
 
-export type SeasonalTopRow = { code: string; name: string; peakMonth: number; peakIndex: number; stock: AvailableStock; days: DaysOfStock };
+export type SeasonalTopRow = { code: string; name: string; peakMonth: number; peakIndex: number };
 
 export async function getOverview(seg: Segment) {
   const [rows, codes, basis] = await Promise.all([
@@ -251,16 +272,9 @@ export async function getOverview(seg: Segment) {
   }
   candidates.sort((a, b) => b.peakIndex - a.peakIndex);
   const top = candidates.slice(0, 10);
-  const [products, stocks, rates] = await Promise.all([
-    prisma.product.findMany({ where: { code: { in: top.map((t) => t.code) } }, select: { code: true, name: true } }),
-    computeForProducts(top.map((t) => t.code)),
-    getShipmentRates(top.map((t) => t.code)),
-  ]);
+  const products = await prisma.product.findMany({ where: { code: { in: top.map((t) => t.code) } }, select: { code: true, name: true } });
   const nameOf = new Map(products.map((p) => [p.code, p.name]));
-  const topRows: SeasonalTopRow[] = top.map((t) => {
-    const stock = stocks.get(t.code)!;
-    return { ...t, name: nameOf.get(t.code) ?? t.code, stock, days: daysOfStock(stock, rates.get(t.code) ?? null, rates.basisTo) };
-  });
+  const topRows: SeasonalTopRow[] = top.map((t) => ({ ...t, name: nameOf.get(t.code) ?? t.code }));
 
   return {
     basis,

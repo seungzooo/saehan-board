@@ -6,6 +6,7 @@ import { basisText, SampleBadge } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import CancelBatchButton from "./CancelBatchButton";
+import CompletionEditor from "./CompletionEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -135,6 +136,21 @@ async function UploadDetailPageInner({ params, searchParams }: { params: Promise
               기간 {d.period.from} ~ {d.period.to}
             </p>
           )}
+          <section className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3" data-testid="completion-section">
+            <p className="num text-sm">
+              집계 완료 월 <b data-testid="batch-complete-through">{b.completeThrough ?? "없음"}</b>
+              {b.completeThroughSetAt && <span className="text-xs text-zinc-500"> · {formatDateTime(b.completeThroughSetAt)} 정함</span>}
+            </p>
+            <p className="text-xs text-zinc-600">
+              {d.isEffectiveCompletion
+                ? "지금 분석 화면이 이 값을 씁니다 (가장 최근 업로드)."
+                : d.effectiveCompletion
+                  ? `지금 분석 화면은 더 최근 업로드 "${d.effectiveCompletion.fileName}"의 ${d.effectiveCompletion.completeThrough}를 씁니다.`
+                  : "집계 완료 월이 정해진 업로드가 없습니다."}{" "}
+              이 달 이후는 분석 비교에서 &ldquo;집계 중&rdquo;으로 빠집니다. 자료 마지막 달 {d.lastDataYm ?? "—"}보다 늦게 정할 수 없습니다.
+            </p>
+            {!b.revertedAt && <CompletionEditor batchId={b.id} initial={b.completeThrough} lastDataYm={d.lastDataYm} />}
+          </section>
           <Link href="/analytics" className="flex h-12 w-fit items-center rounded-lg bg-blue-600 px-4 text-base font-semibold text-white">
             추이 보기 →
           </Link>

@@ -8,7 +8,7 @@ import { isSampleFileName } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import { previewStockAction, uploadAction } from "./actions";
+import { previewStockAction, suggestCompletionAction, uploadAction } from "./actions";
 
 const TABS: { kind: UploadKind; label: string; hint: string }[] = [
   {
@@ -42,6 +42,9 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   const [asOf, setAsOf] = useState(nowSeoulLocal);
   const [defectApplied, setDefectApplied] = useState<"yes" | "no">("no");
   const [mode, setMode] = useState<StockMode>("REPLACE");
+  // (출고·생산실적) 이 파일의 집계 완료 월: 파일을 고르면 자동 제안, 담당자가 바꿀 수 있다
+  const [completeMonth, setCompleteMonth] = useState("");
+  const [suggestInfo, setSuggestInfo] = useState<{ lastDate: string; suggestion: string } | { error: string } | null>(null);
   const [preview, setPreview] = useState<StockPreview | null>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [lastFileName, setLastFileName] = useState("");
@@ -53,6 +56,8 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   function reset() {
     setFile(null);
     setPreview(null);
+    setCompleteMonth("");
+    setSuggestInfo(null);
     setResult(null);
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -61,10 +66,24 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
     setFile(f);
     setResult(null);
     setPreview(null);
+    setSuggestInfo(null);
+    setCompleteMonth("");
     if (f && kind === "STOCK") {
       const fd = new FormData();
       fd.set("file", f);
       startTransition(async () => setPreview(await previewStockAction(fd)));
+    }
+    if (f && (kind === "SALES" || kind === "PRODUCTION")) {
+      const fd = new FormData();
+      fd.set("file", f);
+      fd.set("kind", kind);
+      startTransition(async () => {
+        const r = await suggestCompletionAction(fd);
+        if (r.ok) {
+          setSuggestInfo({ lastDate: r.lastDate, suggestion: r.suggestion });
+          setCompleteMonth(r.suggestion);
+        } else setSuggestInfo({ error: r.message });
+      });
     }
   }
 
@@ -78,6 +97,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
       fd.set("defectApplied", defectApplied);
       fd.set("mode", mode);
     }
+    if ((kind === "SALES" || kind === "PRODUCTION") && completeMonth) fd.set("completeThrough", completeMonth);
     if (allowRowErrors) fd.set("allowRowErrors", "1");
     setLastFileName(file.name);
     setResult(null);
@@ -135,6 +155,10 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
           onChange={(e) => onFile(e.target.files?.[0] ?? null)}
           className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
         />
+
+        {(kind === "SALES" || kind === "PRODUCTION") && file && (
+          <CompletionField info={suggestInfo} value={completeMonth} onChange={setCompleteMonth} pending={pending && !suggestInfo} kind={kind} />
+        )}
 
         {kind === "STOCK" && file && (
           <PreviewCard preview={preview} pending={pending && !preview} mode={mode} onMode={setMode} />
@@ -496,6 +520,51 @@ function ResultCard({
     <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
       <p className="font-semibold">업로드 실패. 직전 재고 기준이 그대로 유지됩니다.</p>
       <p className="mt-1 break-all">{r.message}</p>
+    </div>
+  );
+}
+
+/** 출고·생산실적: 이 파일의 집계 완료 월 (기본 제안 + 수정) */
+function CompletionField({
+  info,
+  value,
+  onChange,
+  pending,
+  kind,
+}: {
+  info: { lastDate: string; suggestion: string } | { error: string } | null;
+  value: string;
+  onChange: (v: string) => void;
+  pending: boolean;
+  kind: "SALES" | "PRODUCTION";
+}) {
+  if (pending || !info) return <p className="text-sm text-zinc-500">파일의 마지막 날짜를 읽는 중…</p>;
+  if ("error" in info) return <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{info.error}</p>;
+  const lastYm = info.lastDate.slice(0, 7);
+  const pendingMonth = value && value < lastYm;
+  return (
+    <div className="flex flex-col gap-1 rounded-md bg-zinc-50 p-3 text-sm" data-testid="completion-field">
+      <label htmlFor="complete-month" className="text-zinc-700">
+        이 파일의 집계 완료 월
+      </label>
+      <input
+        id="complete-month"
+        type="month"
+        value={value}
+        max={lastYm}
+        onChange={(e) => onChange(e.target.value)}
+        className="num h-11 rounded-md border border-zinc-300 bg-white px-3 text-base"
+      />
+      <p className="num text-xs text-zinc-600">
+        파일 마지막 {kind === "SALES" ? "출고일" : "생산일"} <b>{info.lastDate}</b> → 기본 제안 <b>{info.suggestion}</b>
+        {info.suggestion < lastYm ? ` (${lastYm}은 말일·마지막 영업일 전에 끝나 집계 중으로 봄)` : " (그 달 말일·마지막 영업일까지 자료 있음)"}
+      </p>
+      <p className="text-xs text-zinc-500">
+        {pendingMonth
+          ? `${value} 이후 달은 분석 비교에서 "집계 중"으로 빠집니다. 그 달 자료가 다 들어왔다면 ${lastYm}으로 바꾸세요.`
+          : "분석 화면의 전년 동기간·최근 12개월 비교는 이 달까지만 씁니다."}{" "}
+        저장 후에도 업로드 상세에서 고칠 수 있습니다.
+      </p>
     </div>
   );
 }
