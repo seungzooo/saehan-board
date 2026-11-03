@@ -179,7 +179,7 @@ async function Dashboard({ basis: stockBasis }: { basis: Awaited<ReturnType<type
           {s.checked > 0 && <div className="h-full bg-blue-600" style={{ width: `${100 - uncheckedPct}%` }} />}
           {s.unchecked > 0 && <div className="h-full bg-zinc-300" style={{ width: `${uncheckedPct}%` }} />}
         </div>
-        <p className="mt-1 text-xs text-zinc-500">관리 대상 중 최근 재고 파일에 없는 품목 — 최근 출고량 많은 순으로 보기 →</p>
+        <p className="mt-1 text-xs text-zinc-500">관리 대상 중 최근 재고 파일에 없는 품목 — 최근 3개월 출고 건수 많은 순으로 보기 →</p>
       </Link>
 
       {/* 곧 소진 표 */}
