@@ -29,6 +29,7 @@ export type StockListRow = {
   code: string;
   name: string;
   packUnit: string;
+  unitsPerBox: number; // 포장단위수량 — 1이면 출고량은 낱개 수
   managed: boolean; // false = 휴면
   stock: AvailableStock; // available null = 확인 필요, 0 = 0박스
   days: number | null; // 예상 소진일수, null = 산정 불가
@@ -147,8 +148,13 @@ export function buildList(
   return paginate(sortRows(found, opts.view), opts.page, opts.size);
 }
 
-/** 출고량 단위: 박스·파렛트·필름은 그 이름, 그 밖(83*155·없음 등)은 "포장" */
-export function shipUnitLabel(packUnit: string | null | undefined): string {
+/**
+ * 출고량 단위. 출고 박스 환산 = 출고수량 ÷ 포장단위수량이므로:
+ *   포장단위수량 1 → "개" (낱개 수 그대로 — 판매실적에 입수가 1로 들어온 품목, 2026-11 기준 88개)
+ *   박스·파렛트·필름 → 그 이름, 그 밖(83*155·없음 등) → "포장"
+ */
+export function shipUnitLabel(packUnit: string | null | undefined, unitsPerBox?: number): string {
+  if (unitsPerBox === 1) return "개";
   const u = (packUnit ?? "").trim();
   return ["박스", "파렛트", "필름"].includes(u) ? u : "포장";
 }

@@ -37,7 +37,7 @@ test("미확인 목록 390px: 품번·3개월 출고량·단위가 보이고 큰
     expect(box, `${id} 보임`).not.toBeNull();
     expect(box!.x + box!.width, `${id} 화면 안`).toBeLessThanOrEqual(390);
   }
-  await expect(first.getByTestId("row-recent-qty")).toContainText(/(박스|파렛트|필름|포장)$/);
+  await expect(first.getByTestId("row-recent-qty")).toContainText(/(박스|파렛트|필름|포장|개)$/);
   // 큰 문구(text-2xl 이상)로 된 '확인 필요'가 없어야 한다
   const big = await page.locator("main :is(.text-2xl,.text-3xl,.text-4xl,.text-5xl)", { hasText: "확인 필요" }).count();
   expect(big).toBe(0);

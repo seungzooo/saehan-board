@@ -30,7 +30,7 @@ function Badge({ row, lowDays }: { row: Row; lowDays: number }) {
 export default function StockListRow({ row, lowDays }: { row: Row; lowDays: number }) {
   const checked = row.stock.available !== null;
   const muted = isDiscontinued(row.name);
-  const unit = shipUnitLabel(row.packUnit);
+  const unit = shipUnitLabel(row.packUnit, row.unitsPerBox);
   return (
     <li>
       <Link

@@ -24,6 +24,7 @@ const stock = (available: number | null): AvailableStock => ({
 const row = (p: Partial<StockListRow> & { code: string }): StockListRow => ({
   name: p.code,
   packUnit: "박스",
+  unitsPerBox: 10,
   managed: true,
   stock: stock(10),
   days: 5,
@@ -124,5 +125,8 @@ describe("출고량 단위", () => {
     expect(shipUnitLabel("파렛트")).toBe("파렛트");
     expect(shipUnitLabel("83*155")).toBe("포장");
     expect(shipUnitLabel("없음")).toBe("포장");
+    expect(shipUnitLabel("83*155", 1)).toBe("개"); // 입수 1 → 출고량은 낱개
+    expect(shipUnitLabel("박스", 1)).toBe("개");
+    expect(shipUnitLabel("박스", 24)).toBe("박스");
   });
 });

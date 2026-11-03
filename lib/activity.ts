@@ -72,7 +72,7 @@ export async function getManagedCodes(): Promise<Set<string>> {
 /** 등록된 전 품목(활성)의 목록 행 — 홈 집계와 재고 목록이 같은 데이터를 쓴다 */
 export async function getStockUniverse(): Promise<{ basis: ActivityBasis; rows: StockListRow[] }> {
   const basis = await getActivityBasis();
-  const products = await prisma.product.findMany({ where: { isActive: true }, select: { code: true, name: true, packUnit: true } });
+  const products = await prisma.product.findMany({ where: { isActive: true }, select: { code: true, name: true, packUnit: true, unitsPerBox: true } });
   const codes = products.map((p) => p.code);
   const [activity, stocks, rates] = await Promise.all([getActivityMap(basis), computeForProducts(codes), getShipmentRates(codes)]);
   const rows: StockListRow[] = products.map((p) => {
@@ -82,6 +82,7 @@ export async function getStockUniverse(): Promise<{ basis: ActivityBasis; rows: 
       code: p.code,
       name: p.name,
       packUnit: p.packUnit,
+      unitsPerBox: p.unitsPerBox,
       managed: !!a?.inWindow,
       stock,
       days: daysOfStock(stock, rates.get(p.code) ?? null, rates.basisTo).days,
