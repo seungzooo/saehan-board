@@ -6,7 +6,7 @@ import { getTodayActivity } from "@/lib/dashboard";
 import { formatDateTime, formatShort, isSameSeoulDay } from "@/lib/format";
 import { sortRows } from "@/lib/managed";
 import { getStockBasis, searchStock } from "@/lib/stock";
-import { BasisLine, isDiscontinued } from "@/lib/stockDisplay";
+import { BasisLine, daysNumText, isDiscontinued } from "@/lib/stockDisplay";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -219,7 +219,7 @@ async function Dashboard({ basis: stockBasis }: { basis: Awaited<ReturnType<type
                     </td>
                     <td className="px-3 py-0 text-right">
                       <Link href={href} className="block py-3 font-semibold text-orange-700">
-                        {r.days! >= 10 ? Math.round(r.days!) : Number(r.days!.toFixed(1))}일
+                        {daysNumText(r.days, r.daysWindow)}
                       </Link>
                     </td>
                   </tr>

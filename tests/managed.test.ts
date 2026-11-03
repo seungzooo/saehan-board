@@ -28,6 +28,7 @@ const row = (p: Partial<StockListRow> & { code: string }): StockListRow => ({
   managed: true,
   stock: stock(10),
   days: 5,
+  daysWindow: "30d",
   lastShipDate: "2025-12-01",
   recentCount: 0,
   recentQty: 0,

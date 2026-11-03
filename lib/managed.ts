@@ -33,6 +33,7 @@ export type StockListRow = {
   managed: boolean; // false = 휴면
   stock: AvailableStock; // available null = 확인 필요, 0 = 0박스
   days: number | null; // 예상 소진일수, null = 산정 불가
+  daysWindow: "30d" | "12m"; // 일평균 산정 방식 — 간헐 출고 품목은 12개월 평균 (lib/stock chooseRate)
   lastShipDate: string | null; // 최근 정상·내수 출고일 (전 기간)
   recentCount: number; // 기준월 포함 최근 3개 달 정상·내수 출고 건수(전표 수) — 미확인 정렬 기준
   recentQty: number; // 같은 기간 출고량 (품목 단위: 박스·개 등) — 표시만, 정렬에 쓰지 않음 (단위가 품목마다 달라 비교 불가)

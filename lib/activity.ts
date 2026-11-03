@@ -33,6 +33,7 @@ export async function getStockUniverse(): Promise<{ basis: ActivityBasis; rows: 
   const rows: StockListRow[] = products.map((p) => {
     const a = activity.get(p.code);
     const stock = stocks.get(p.code)!;
+    const d = daysOfStock(stock, rates.get(p.code) ?? null, rates.basisTo);
     return {
       code: p.code,
       name: p.name,
@@ -40,7 +41,8 @@ export async function getStockUniverse(): Promise<{ basis: ActivityBasis; rows: 
       unitsPerBox: p.unitsPerBox,
       managed: !!a?.inWindow,
       stock,
-      days: daysOfStock(stock, rates.get(p.code) ?? null, rates.basisTo).days,
+      days: d.days,
+      daysWindow: d.window,
       lastShipDate: a?.lastShipDate ?? null,
       recentCount: a?.recentCount ?? 0,
       recentQty: a?.recentQty ?? 0,

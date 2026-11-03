@@ -1,6 +1,6 @@
 import { ChartHead, LagChart, ReturnsChart, SeasonChart, TrendChart } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
-import { cachedAnalysisBasis, cachedCompletionInfo, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
+import { cachedAnalysisBasis, cachedCompletionInfo, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
 import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
 import { getLiveStock, MAX_LAG, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
 import {
@@ -170,7 +170,7 @@ async function SearchResults({ q, link }: { q: string; link: (p: Record<string, 
 }
 
 async function ProductView({ code, period, year }: { code: string; period: PeriodData; year: YearChoice }) {
-  const [a, unitsData, live] = await Promise.all([cachedProductAnalysis(code), cachedMonthlyUnits(code), getLiveStock([code])]);
+  const [a, unitsData, live, itemData] = await Promise.all([cachedProductAnalysis(code), cachedMonthlyUnits(code), getLiveStock([code]), cachedItemShipData(code)]);
 
   // 월별 출고량은 생산 기록과 무관하게 보여 준다. 교집합 조건은 생산·판매 비교 분석에만 적용
   const product = a.ok ? a.product : a.product;
@@ -185,6 +185,7 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
       scope={`${product.name} (${product.code})`}
       boxSize={boxSize}
       keepParams={{ code: product.code }}
+      item={itemData}
     />
   );
 

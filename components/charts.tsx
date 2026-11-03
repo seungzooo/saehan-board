@@ -196,7 +196,17 @@ export function ReturnsChart({ data, boxSize }: { data: { yearMonth: string; ret
 /** 월별 출고량 한 점 (낱개). units null = 자료 없음·집계 중 → 선을 끊는다 */
 export type MonthPointView = { month: number; ym: string; units: number | null; status: "ok" | "missing" | "incomplete" | "nodata" };
 
-const STATUS_TEXT = { missing: "자료 누락", incomplete: "집계 중", nodata: "자료 없음", ok: "" } as const;
+/** 값이 없는 달: 전부 "자료 없음"으로 시작해 "출고 없음"(집계 완료된 실제 0)과 구분 */
+const STATUS_TEXT = { missing: "자료 없음 (누락)", incomplete: "자료 없음 (집계 중)", nodata: "자료 없음", ok: "" } as const;
+
+/** 툴팁·테스트 공용: "2025년 3월 · 출고 없음" / "2025년 3월 · 자료 없음 (집계 중)" / 값이 있으면 null */
+export function monthEmptyText(p: Pick<MonthPointView, "ym" | "units" | "status">): string | null {
+  const [y, m] = p.ym.split("-");
+  const head = `${y}년 ${Number(m)}월`;
+  if (p.units === null) return `${head} · ${STATUS_TEXT[p.status] || "자료 없음"}`;
+  if (p.units === 0) return `${head} · 출고 없음`;
+  return null;
+}
 
 function MonthTooltip({
   active,
@@ -210,23 +220,31 @@ function MonthTooltip({
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   const [y, m] = p.ym.split("-");
+  const empty = monthEmptyText(p);
   return (
     <div style={tooltipStyle} className="bg-white px-2 py-1" data-testid="month-tooltip">
-      <p className="font-semibold">
-        {y}년 {Number(m)}월
-      </p>
-      <p className="num">{p.units === null ? STATUS_TEXT[p.status] : `정상 출고 ${formatUnits(p.units, boxSize)}`}</p>
+      {empty ? (
+        <p className="font-semibold">{empty}</p>
+      ) : (
+        <>
+          <p className="font-semibold">
+            {y}년 {Number(m)}월
+          </p>
+          <p className="num">정상 출고 {formatUnits(p.units!, boxSize)}</p>
+        </>
+      )}
     </div>
   );
 }
 
 /** 선택 연도 월별 출고량 — 가로축 1~12월 고정, 자료 없는 달은 선을 끊는다, 완료된 0은 0 */
-export function YearMonthChart({ points, boxSize, unit }: { points: MonthPointView[]; boxSize: number | null; unit: string }) {
+export function YearMonthChart({ points, boxSize, unit, bars = false }: { points: MonthPointView[]; boxSize: number | null; unit: string; bars?: boolean }) {
   const data = points.map((p) => ({ ...p, label: `${p.month}월`, v: p.units === null ? null : boxSize ? p.units / boxSize : p.units }));
+  const Chart = bars ? BarChart : LineChart;
   return (
-    <div className="h-60 w-full" data-testid="year-month-chart">
+    <div className="h-60 w-full" data-testid="year-month-chart" data-kind={bars ? "bar" : "line"}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+        <Chart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="label" interval={0} tick={{ fontSize: 10, fill: AXIS }} tickMargin={4} padding={{ left: 6, right: 6 }} />
           <YAxis
@@ -235,31 +253,36 @@ export function YearMonthChart({ points, boxSize, unit }: { points: MonthPointVi
             tickFormatter={(v: number) => (v >= 1_000_000 ? `${nf(v / 1_000_000)}백만` : v >= 10_000 ? `${nf(v / 10_000)}만` : nf(v))}
             label={{ value: unit, position: "insideTopLeft", offset: 0, dy: -6, fontSize: 10, fill: AXIS }}
           />
-          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={{ stroke: "#a1a1aa" }} />
-          <Line
-            type="linear"
-            dataKey="v"
-            stroke={COLOR_SHIPMENT}
-            strokeWidth={2}
-            connectNulls={false}
-            dot={{ r: 3, fill: COLOR_SHIPMENT }}
-            activeDot={{ r: 6 }}
-            isAnimationActive={false}
-          />
-        </LineChart>
+          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={bars ? { fill: "#f4f4f5" } : { stroke: "#a1a1aa" }} />
+          {bars ? (
+            <Bar dataKey="v" fill={COLOR_SHIPMENT} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+          ) : (
+            <Line
+              type="linear"
+              dataKey="v"
+              stroke={COLOR_SHIPMENT}
+              strokeWidth={2}
+              connectNulls={false}
+              dot={{ r: 3, fill: COLOR_SHIPMENT }}
+              activeDot={{ r: 6 }}
+              isAnimationActive={false}
+            />
+          )}
+        </Chart>
       </ResponsiveContainer>
     </div>
   );
 }
 
 /** 전체 기간 월별 출고량 — 해가 바뀌는 1월마다 세로 구분선과 연도 라벨 */
-export function AllPeriodChart({ points, boxSize, unit }: { points: MonthPointView[]; boxSize: number | null; unit: string }) {
+export function AllPeriodChart({ points, boxSize, unit, bars = false }: { points: MonthPointView[]; boxSize: number | null; unit: string; bars?: boolean }) {
   const data = points.map((p) => ({ ...p, v: p.units === null ? null : boxSize ? p.units / boxSize : p.units }));
   const yearStarts = points.filter((p) => p.month === 1).map((p) => p.ym);
+  const Chart = bars ? BarChart : LineChart;
   return (
-    <div className="h-60 w-full" data-testid="all-period-chart">
+    <div className="h-60 w-full" data-testid="all-period-chart" data-kind={bars ? "bar" : "line"}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 30, right: 16, bottom: 0, left: 0 }}>
+        <Chart data={data} margin={{ top: 30, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="ym" tick={false} height={8} />
           <YAxis
@@ -277,9 +300,13 @@ export function AllPeriodChart({ points, boxSize, unit }: { points: MonthPointVi
               label={{ value: `${ym.slice(0, 4)}년`, position: "insideTopLeft", dy: -24, dx: 2, fontSize: 10, fill: "#52525b" }}
             />
           ))}
-          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={{ stroke: "#a1a1aa" }} />
-          <Line type="linear" dataKey="v" stroke={COLOR_SHIPMENT} strokeWidth={2} connectNulls={false} dot={false} activeDot={{ r: 5 }} isAnimationActive={false} />
-        </LineChart>
+          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={bars ? { fill: "#f4f4f5" } : { stroke: "#a1a1aa" }} />
+          {bars ? (
+            <Bar dataKey="v" fill={COLOR_SHIPMENT} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+          ) : (
+            <Line type="linear" dataKey="v" stroke={COLOR_SHIPMENT} strokeWidth={2} connectNulls={false} dot={false} activeDot={{ r: 5 }} isAnimationActive={false} />
+          )}
+        </Chart>
       </ResponsiveContainer>
     </div>
   );

@@ -1,7 +1,7 @@
 import { RECENT_QTY_MONTHS } from "@/config/stock";
 import { shipUnitLabel, type StockListRow as Row } from "@/lib/managed";
 import { formatShort } from "@/lib/format";
-import { DiscontinuedBadge, isDiscontinued, isStockStale } from "@/lib/stockDisplay";
+import { daysNumText, DiscontinuedBadge, isDiscontinued, isStockStale } from "@/lib/stockDisplay";
 import Link from "next/link";
 
 const nf = (v: number) => v.toLocaleString("ko-KR", { maximumFractionDigits: 1 });
@@ -55,7 +55,7 @@ export default function StockListRow({ row, lowDays }: { row: Row; lowDays: numb
               <span>
                 현재 <b className={row.stock.available! <= 0 ? "text-red-600" : "text-zinc-900"}>{nf(row.stock.available!)}</b>박스
               </span>
-              <span>소진 {row.days === null ? "산정 불가" : `${nf(row.days >= 10 ? Math.round(row.days) : row.days)}일`}</span>
+              <span data-testid="row-days">소진 {daysNumText(row.days, row.daysWindow)}</span>
               <span data-testid="row-asof">집계 {row.stock.stockAsOf ? formatShort(row.stock.stockAsOf) : "시각 미확인"}</span>
             </>
           ) : null}

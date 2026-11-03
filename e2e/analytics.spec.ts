@@ -128,3 +128,33 @@ test("생산 실적 없는 품번: 월별 출고량은 보이고 생산 비교�
   await expect(page.getByTestId("shipment-title")).toBeVisible();
   await expect(page.getByTestId("not-analyzable")).toContainText("분석 불가");
 });
+
+test.describe("간헐 출고 품목", () => {
+  test("품목 선택: 막대 차트 + 요약 한 줄 + 간헐 안내(비교 박스 위). 전체 거래처는 선 유지", async ({ page }) => {
+    await page.goto("/analytics?code=TR00951&year=2025");
+    await expect(page.getByTestId("year-month-chart")).toHaveAttribute("data-kind", "bar");
+    await expect(page.getByTestId("item-summary")).toHaveText("2025년 출고 77회 · 거래처 1곳(지평주조) · 출고한 달 4/12");
+    const note = page.getByTestId("intermittent-note");
+    await expect(note).toHaveText("간헐 출고 품목 — 월별 증감률보다 연간 합계로 비교하세요");
+    // 안내가 비교 박스 바로 위
+    const noteBox = (await note.boundingBox())!;
+    const cmpBox = (await page.getByTestId("shipment-compare").boundingBox())!;
+    expect(noteBox.y).toBeLessThan(cmpBox.y);
+    await page.getByTestId("year-buttons").getByRole("link", { name: "전체 기간" }).click();
+    await expect(page.getByTestId("all-period-chart")).toHaveAttribute("data-kind", "bar");
+    await expect(page.getByTestId("item-summary")).toContainText("전체 기간 출고");
+
+    await page.goto("/analytics?year=2025");
+    await expect(page.getByTestId("year-month-chart")).toHaveAttribute("data-kind", "line");
+    await expect(page.getByTestId("item-summary")).toHaveCount(0);
+  });
+
+  test("월말 일괄 기록 품목: 분석과 품목 상세에 안내", async ({ page }) => {
+    await page.goto("/analytics?code=AMPT001");
+    await expect(page.getByTestId("month-end-note")).toHaveText("월말 일괄 기록 품목 — 실제 출고 시점과 다를 수 있음");
+    await page.goto("/stock/AMPT001");
+    await expect(page.getByTestId("month-end-note")).toHaveText("월말 일괄 기록 품목 — 실제 출고 시점과 다를 수 있음");
+    await page.goto("/stock/TR00951");
+    await expect(page.getByTestId("month-end-note")).toHaveCount(0);
+  });
+});

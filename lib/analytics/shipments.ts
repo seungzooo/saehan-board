@@ -6,6 +6,7 @@
  * - 반품: 출고구분 "반품", 원본이 음수로 들어오므로 부호를 뒤집어 양수 합.
  * - 완전성: 출고 행이 하나라도 있는 달 집합 + 가장 최근 출고실적 업로드 배치의 "집계 완료 월".
  */
+import { isMonthEnd, type ItemShipData, type ItemShipRow } from "./itemStats";
 import { prisma } from "@/lib/db";
 import { effectiveCompletion, type CompletionBatch } from "./completion";
 import { buildContext, type PeriodContext } from "./periods";
@@ -79,4 +80,23 @@ export async function getMonthlyUnitsData(code?: string): Promise<MonthlyUnitsDa
 
 export async function getMonthlyUnits(code?: string): Promise<MonthlyUnits> {
   return unitsOf(await getMonthlyUnitsData(code));
+}
+
+/** 품목의 정상 출고 요약 자료 — 연월·거래처별 건수, 월말 출고 건수 (lib/analytics/itemStats.ts) */
+export async function getItemShipData(code: string): Promise<ItemShipData> {
+  const [byMonth, byDate] = await Promise.all([
+    prisma.shipmentHistory.groupBy({ by: ["yearMonth", "customerCode"], where: { productCode: code, shipType: "정상" }, _count: { _all: true } }),
+    prisma.shipmentHistory.groupBy({ by: ["date"], where: { productCode: code, shipType: "정상" }, _count: { _all: true } }),
+  ]);
+  let shipments = 0;
+  let monthEndShipments = 0;
+  for (const d of byDate) {
+    shipments += d._count._all;
+    if (isMonthEnd(d.date.toISOString())) monthEndShipments += d._count._all;
+  }
+  return {
+    rows: byMonth.map((r) => [r.yearMonth, r.customerCode, r._count._all] as ItemShipRow).sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
+    shipments,
+    monthEndShipments,
+  };
 }

@@ -59,10 +59,19 @@ export function availableText(s: AvailableStock): string {
   return s.available === null ? NEEDS_CHECK : s.available.toLocaleString();
 }
 
-/** 예상 소진일수: "2.5일" / "산정 불가" */
+/** 예상 소진일수: "2.5일" / "40일 (12개월 평균)"(간헐 출고 품목) / "산정 불가" — 목록·상세·홈 공용 */
+export function daysNumText(days: number | null, window: DaysOfStock["window"] = "30d"): string {
+  if (days === null) return "산정 불가";
+  const n = days >= 10 ? Math.round(days).toLocaleString() : String(Number(days.toFixed(1)));
+  return window === "12m" ? `${n}일 (12개월 평균)` : `${n}일`;
+}
 export function daysText(d: DaysOfStock): string {
-  if (d.days === null) return "산정 불가";
-  return `${d.days >= 10 ? Math.round(d.days) : Number(d.days.toFixed(1))}일`;
+  return daysNumText(d.days, d.window);
+}
+
+/** 일평균 산정 방식 이름: "최근 30일 일평균" / "최근 12개월 일평균" */
+export function rateLabel(window: DaysOfStock["window"]): string {
+  return window === "12m" ? "최근 12개월 일평균" : "최근 30일 일평균";
 }
 
 /** 수량 색상 — stockStatus와 같은 규칙 */

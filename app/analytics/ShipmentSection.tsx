@@ -16,6 +16,7 @@ import {
   ymSpanLabel,
   type YearChoice,
 } from "@/lib/analytics/periods";
+import { INTERMITTENT_NOTE, isIntermittent, isMonthEndOnly, MONTH_END_NOTE, summarizeItem, summaryLine, type ItemShipData } from "@/lib/analytics/itemStats";
 import type { MonthlyUnitsData, PeriodData } from "@/lib/analytics/shipments";
 import { useMemo, useState } from "react";
 
@@ -37,6 +38,7 @@ export default function ShipmentSection({
   scope,
   boxSize,
   keepParams = {},
+  item,
 }: {
   period: PeriodData;
   data: MonthlyUnitsData;
@@ -45,6 +47,8 @@ export default function ShipmentSection({
   boxSize: number | null;
   /** JS 없이 눌러도 같은 화면이 되도록 href에 함께 넣을 쿼리 (예: code) */
   keepParams?: Record<string, string>;
+  /** 품목을 골랐을 때: 막대 차트 + 출고 요약 한 줄 + 간헐 출고·월말 일괄 안내. 없으면 전체 거래처 합계(선) */
+  item?: ItemShipData;
 }) {
   const ctx = useMemo(() => buildContext(period.presentMonths, period.declaredThrough), [period]);
   const normal = useMemo(() => new Map(data.normal), [data]);
@@ -89,6 +93,16 @@ export default function ShipmentSection({
     return { title: `${year}년 월별 출고량`, periodLine, points, comparison, returnsLine };
   }, [year, ctx, normal, returns, scope, boxSize]);
 
+  // 품목 요약: 그 기간의 집계 완료된 달만 분모. 전체 기간 보기의 간헐 판정은 최근 집계 완료 12개월
+  const itemView = useMemo(() => {
+    if (!item) return null;
+    const okMonths = view.points.filter((p) => p.status === "ok").map((p) => p.ym);
+    const label = year === "all" ? "전체 기간" : `${year}년`;
+    const summary = summarizeItem(item.rows, okMonths);
+    const recent = year === "all" ? summarizeItem(item.rows, okMonths.slice(-12)) : summary;
+    return { line: summaryLine(label, summary), intermittent: isIntermittent(recent), monthEnd: isMonthEndOnly(item) };
+  }, [item, view.points, year]);
+
   const lines = describeComparison(view.comparison, boxSize);
   const c = view.comparison;
 
@@ -120,15 +134,33 @@ export default function ShipmentSection({
         <p className="num text-xs text-zinc-600" data-testid="shipment-period">
           {view.periodLine}
         </p>
+        {itemView && (
+          <p className="num text-sm font-medium text-zinc-800" data-testid="item-summary">
+            {itemView.line}
+          </p>
+        )}
+        {itemView?.monthEnd && (
+          <p className="text-xs text-amber-800" data-testid="month-end-note">
+            {MONTH_END_NOTE}
+          </p>
+        )}
         <p className="text-xs text-zinc-500">
-          {unitNote} · 점을 누르면 그 달의 정확한 수량 · 끊긴 구간 = 자료 없음/집계 중, 0 = 집계 완료된 실제 0
+          {item
+            ? `${unitNote} · 막대를 누르면 그 달의 정확한 수량 · 막대 없음 = 출고 없음 또는 자료 없음(눌러서 구분)`
+            : `${unitNote} · 점을 누르면 그 달의 정확한 수량 · 끊긴 구간 = 자료 없음/집계 중, 0 = 집계 완료된 실제 0`}
         </p>
       </div>
 
       {year === "all" ? (
-        <AllPeriodChart points={view.points} boxSize={boxSize} unit={unit} />
+        <AllPeriodChart points={view.points} boxSize={boxSize} unit={unit} bars={!!item} />
       ) : (
-        <YearMonthChart points={view.points} boxSize={boxSize} unit={unit} />
+        <YearMonthChart points={view.points} boxSize={boxSize} unit={unit} bars={!!item} />
+      )}
+
+      {itemView?.intermittent && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="intermittent-note">
+          {INTERMITTENT_NOTE}
+        </p>
       )}
 
       <div className="rounded-lg border border-zinc-200 p-3" data-testid="shipment-compare">

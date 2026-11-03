@@ -3,9 +3,11 @@ import CalcBar from "@/components/CalcBar";
 import { ChartHead, Sparkline } from "@/components/charts";
 import { getProductActivity } from "@/lib/activity";
 import { getDailyShipments, getProductDetail } from "@/lib/stock";
-import { availableText, BasisLine, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
+import { availableText, BasisLine, daysText, productInfoText, rateLabel, StatusBadge, stockStatus } from "@/lib/stockDisplay";
 import RequestCalculator from "@/components/RequestCalculator";
 import { qtyText, stockUnits } from "@/lib/request";
+import { cachedItemShipData } from "@/lib/analytics/cached";
+import { isMonthEndOnly, MONTH_END_NOTE } from "@/lib/analytics/itemStats";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -21,7 +23,12 @@ export default async function ProductDetailPage({
 }) {
   const [{ code }, { q, customer }] = await Promise.all([params, searchParams]);
   const productCode = decodeURIComponent(code);
-  const [detail, daily, act] = await Promise.all([getProductDetail(productCode), getDailyShipments(productCode), getProductActivity(productCode)]);
+  const [detail, daily, act, shipData] = await Promise.all([
+    getProductDetail(productCode),
+    getDailyShipments(productCode),
+    getProductActivity(productCode),
+    cachedItemShipData(productCode),
+  ]);
   if (!detail) notFound();
   const { product, stock, days, history } = detail;
   const needsCheck = stock.available === null;
@@ -57,6 +64,11 @@ export default async function ProductDetailPage({
             {act.basis && ` · 기준 ${act.basis.fromYm}~${act.basis.basisYm}`}
           </span>
         </p>
+        {isMonthEndOnly(shipData) && (
+          <p data-testid="month-end-note" className="mt-1 text-xs text-amber-800">
+            {MONTH_END_NOTE}
+          </p>
+        )}
       </header>
 
       {/* 현재 재고 */}
@@ -102,7 +114,10 @@ export default async function ProductDetailPage({
             <p className="num mt-1 text-sm text-zinc-600">
               예상 소진 <b className={st.key === "LOW" ? "text-orange-700" : ""}>{daysText(days)}</b>
               {days.avgPerDay !== null && days.avgPerDay > 0 && (
-                <span className="text-zinc-500"> · 최근 30일 일평균 {Number(days.avgPerDay.toFixed(1)).toLocaleString()}박스</span>
+                <span className="text-zinc-500">
+                  {" "}
+                  · {rateLabel(days.window)} {Number(days.avgPerDay.toFixed(days.avgPerDay < 1 ? 2 : 1)).toLocaleString()}박스
+                </span>
               )}
             </p>
           </>

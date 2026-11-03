@@ -2,7 +2,8 @@
  * F3 조회용 데이터 접근. 가용재고는 저장하지 않고 매번 computeAvailableStock으로 계산한다.
  */
 import { ANALYSIS_SALES_TYPE, ANALYSIS_SHIP_TYPE } from "@/config/excel-mapping";
-import { SHIPMENT_WINDOW_DAYS } from "@/config/stock";
+import { INTERMITTENT_MAX_MONTHS, RATE_LONG_MONTHS, SHIPMENT_WINDOW_DAYS } from "@/config/stock";
+import { shiftYm } from "@/lib/analytics/periods";
 import { computeAvailableStock, type AvailableStock } from "@/lib/availableStock";
 import { defectResetAtFor } from "@/lib/defectReset";
 import { prisma } from "@/lib/db";
@@ -19,8 +20,20 @@ export type StockRow = {
   days: DaysOfStock;
 };
 
+/** 일평균 출고 산정 방식: 30일 평균 / 간헐 출고 품목은 최근 12개월 일평균 (config/stock.ts) */
+export type RateWindow = "30d" | "12m";
 /** 예상 소진일수. days=null → "산정 불가"(출고 이력 없음 또는 재고 확인 필요) */
-export type DaysOfStock = { days: number | null; avgPerDay: number | null; basisTo: string | null };
+export type DaysOfStock = { days: number | null; avgPerDay: number | null; basisTo: string | null; window: RateWindow };
+export type ShipmentRate = { avgPerDay: number; window: RateWindow; shippedMonths: number };
+
+/**
+ * 산정 방식 결정 (순수 함수): 최근 12개 달 중 출고한 달이 INTERMITTENT_MAX_MONTHS 이하 → 12개월 일평균, 아니면 30일 평균.
+ * sum30 = 최근 30일 합, sumLong·daysLong = 최근 12개 달 합·기간 일수, shippedMonths = 그 12개 달 중 출고(합 > 0)가 있는 달 수
+ */
+export function chooseRate(sum30: number, sumLong: number, daysLong: number, shippedMonths: number): ShipmentRate {
+  if (shippedMonths <= INTERMITTENT_MAX_MONTHS) return { avgPerDay: daysLong > 0 ? sumLong / daysLong : 0, window: "12m", shippedMonths };
+  return { avgPerDay: sum30 / SHIPMENT_WINDOW_DAYS, window: "30d", shippedMonths };
+}
 
 const SEARCH_LIMIT = 50;
 
@@ -103,30 +116,48 @@ async function toRows(products: ProductLite[]): Promise<StockRow[]> {
 }
 
 /**
- * 최근 30일 일평균 출고(박스). 창의 끝은 정상·내수 출고실적의 마지막 날짜(실적 기준일, 관리 대상 기준월과 같은 기준) — "지금" 기준이면
+ * 일평균 출고(박스). 창의 끝은 정상·내수 출고실적의 마지막 날짜(실적 기준일, 관리 대상 기준월과 같은 기준) — "지금" 기준이면
  * 실적 업로드가 늦어진 동안 전부 산정 불가가 되기 때문. basisTo에 그 날짜를 돌려준다.
+ * 품목마다 chooseRate로 30일 평균 또는 (간헐 출고 품목) 최근 12개월 일평균. 재고 목록·상세·홈 곧 소진 모두 이 함수를 쓴다.
  */
-export async function getShipmentRates(codes: string[]): Promise<Map<string, number> & { basisTo: string | null }> {
-  const map = new Map<string, number>() as Map<string, number> & { basisTo: string | null };
+export async function getShipmentRates(codes: string[]): Promise<Map<string, ShipmentRate> & { basisTo: string | null }> {
+  const map = new Map<string, ShipmentRate>() as Map<string, ShipmentRate> & { basisTo: string | null };
   map.basisTo = null;
   if (codes.length === 0) return map;
   const last = await prisma.shipmentHistory.aggregate({ _max: { date: true }, where: { shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE } });
   const to = last._max.date;
   if (!to) return map;
-  const from = new Date(to.getTime() - (SHIPMENT_WINDOW_DAYS - 1) * 86400_000);
-  const sums = await prisma.shipmentHistory.groupBy({
-    by: ["productCode"],
-    where: { productCode: { in: codes }, date: { gte: from, lte: to }, shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE },
-    _sum: { qtyBox: true },
-  });
-  for (const s of sums) map.set(s.productCode, (s._sum.qtyBox ?? 0) / SHIPMENT_WINDOW_DAYS);
+  const from30 = new Date(to.getTime() - (SHIPMENT_WINDOW_DAYS - 1) * 86400_000);
+  const toYm = to.toISOString().slice(0, 7);
+  const fromYm = shiftYm(toYm, -(RATE_LONG_MONTHS - 1));
+  const daysLong = Math.round((to.getTime() - Date.parse(`${fromYm}-01T00:00:00Z`)) / 86400_000) + 1;
+  const base = { productCode: { in: codes }, shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE };
+  const [sums30, byMonth] = await Promise.all([
+    prisma.shipmentHistory.groupBy({ by: ["productCode"], where: { ...base, date: { gte: from30, lte: to } }, _sum: { qtyBox: true } }),
+    prisma.shipmentHistory.groupBy({ by: ["productCode", "yearMonth"], where: { ...base, yearMonth: { gte: fromYm, lte: toYm }, date: { lte: to } }, _sum: { qtyBox: true } }),
+  ]);
+  const s30 = new Map(sums30.map((s) => [s.productCode, s._sum.qtyBox ?? 0]));
+  const long = new Map<string, { sum: number; months: number }>();
+  for (const r of byMonth) {
+    const q = r._sum.qtyBox ?? 0;
+    const cur = long.get(r.productCode) ?? { sum: 0, months: 0 };
+    cur.sum += q;
+    if (q > 0) cur.months++;
+    long.set(r.productCode, cur);
+  }
+  for (const code of new Set([...s30.keys(), ...long.keys()])) {
+    const l = long.get(code) ?? { sum: 0, months: 0 };
+    map.set(code, chooseRate(s30.get(code) ?? 0, l.sum, daysLong, l.months));
+  }
   map.basisTo = to.toISOString().slice(0, 10);
   return map;
 }
 
-export function daysOfStock(stock: AvailableStock, avgPerDay: number | null, basisTo: string | null): DaysOfStock {
-  if (stock.available === null || avgPerDay === null || avgPerDay <= 0) return { days: null, avgPerDay, basisTo };
-  return { days: Math.max(0, stock.available) / avgPerDay, avgPerDay, basisTo };
+export function daysOfStock(stock: AvailableStock, rate: ShipmentRate | null, basisTo: string | null): DaysOfStock {
+  const window: RateWindow = rate?.window ?? "30d";
+  const avgPerDay = rate ? rate.avgPerDay : null;
+  if (stock.available === null || avgPerDay === null || avgPerDay <= 0) return { days: null, avgPerDay, basisTo, window };
+  return { days: Math.max(0, stock.available) / avgPerDay, avgPerDay, basisTo, window };
 }
 
 
