@@ -22,3 +22,14 @@ body {
 .num {
   font-variant-numeric: tabular-nums;
 }
+
+/* Recharts 3는 차트를 포커스 가능하게 만든다. 터치·마우스로 누를 때 생기는 검은 포커스 상자는 숨기고,
+   키보드 포커스(focus-visible)일 때만 테두리를 보인다 */
+.recharts-wrapper :focus:not(:focus-visible),
+.recharts-surface:focus:not(:focus-visible) {
+  outline: none;
+}
+.recharts-wrapper :focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
