@@ -1,10 +1,7 @@
 /** 홈 대시보드 지표. 전부 조회 시점 계산 — 저장하지 않는다 */
-import { LOW_STOCK_THRESHOLD } from "@/config/stock";
 import { prisma } from "@/lib/db";
 import { seoulParts } from "@/lib/format";
-import { computeForProducts, getLatestStockBatch } from "@/lib/stock";
-
-export { LOW_STOCK_THRESHOLD };
+import { getLatestStockBatch, listLowStock } from "@/lib/stock";
 
 /** 오늘(Asia/Seoul) 00:00 의 UTC 시각 */
 export function seoulDayStart(now = new Date()): Date {
@@ -14,23 +11,23 @@ export function seoulDayStart(now = new Date()): Date {
 
 export async function getDashboard() {
   const batch = await getLatestStockBatch();
-  const [productCount, todayAdjustments, recentUploads, lowStockCount] = await Promise.all([
+  const [managed, checked, todayAdjustments, lastAdjustment, recentUploads, low] = await Promise.all([
     prisma.product.count({ where: { isActive: true } }),
+    batch ? prisma.stockSnapshot.count({ where: { batchId: batch.id, product: { isActive: true } } }) : Promise.resolve(0),
     prisma.stockAdjustment.count({ where: { createdAt: { gte: seoulDayStart() }, cancelledAt: null } }),
-    prisma.uploadBatch.findMany({ orderBy: { uploadedAt: "desc" }, take: 3 }),
-    countLowStock(batch?.id ?? null),
+    prisma.stockAdjustment.findFirst({ where: { cancelledAt: null }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
+    prisma.uploadBatch.findMany({ where: { revertedAt: null }, orderBy: { uploadedAt: "desc" }, take: 3 }),
+    listLowStock(),
   ]);
-  return { batch, productCount, todayAdjustments, recentUploads, lowStockCount };
-}
-
-/** 최근 재고 업로드에 있는 품목 중 가용재고 ≤ 임계값인 품목 수 */
-async function countLowStock(batchId: string | null): Promise<number> {
-  if (!batchId) return 0;
-  const codes = (await prisma.stockSnapshot.findMany({ where: { batchId }, select: { productCode: true } })).map(
-    (s) => s.productCode,
-  );
-  const stocks = await computeForProducts(codes);
-  let n = 0;
-  for (const s of stocks.values()) if (s.available !== null && s.available <= LOW_STOCK_THRESHOLD) n++;
-  return n;
+  return {
+    batch,
+    managed,
+    checked,
+    unchecked: managed - checked,
+    todayAdjustments,
+    lastAdjustmentAt: lastAdjustment?.createdAt ?? null,
+    recentUploads,
+    lowStockCount: low.length,
+    lowBasisTo: low[0]?.days.basisTo ?? null,
+  };
 }

@@ -30,7 +30,10 @@
 ```
 
 - 단위: **박스**. 품목별 박스당 입수는 product 테이블에 둔다.
-- 새 엑셀이 업로드되면 `uploadedAt`이 출고·수주·기타 차감의 새 기준점이 된다. 출고·수주 차감은 리셋된다 (ERP가 이미 반영했으므로).
+- 새 엑셀이 업로드되면 **집계 기준 시각(stockAsOf, 모르면 반영 시각)** 이 새 기준점이 된다. 그 이전 출고·수주·기타 차감은 리셋(ERP가 이미 반영), 이후 것은 남는다. 전날 출고 → 다음날 파일 업로드 시 이중 차감 없음(테스트 있음).
+- 수주(ORDER)는 선차감. 그 수주를 이행한 출고를 `orderId`로 연결하면 수주 차감이 해제된다 (이중 차감 방지).
+- 정정은 원기록을 두고 차이값 행(`correctsId`, `correctionReason`)을 추가한다. 음수 가능. 원기록 취소 시 정정도 함께 취소.
+- 저장은 클라이언트 요청 ID(`requestId` unique)로 멱등 — 연타·동시 입력에서 한 건만 저장.
 - 불량 차감 리셋은 **배치별로 결정**한다. 재고 업로드 시 "이 파일에 사후 불량이 반영되어 있나요?"를 묻고, 예(`UploadBatch.defectApplied=true`)이면 그 배치의 반영 시각 이전 불량 차감을 무시한다. 아니오면 유지. (환경변수 `DEFECT_RESET_ON_UPLOAD`는 폐기)
 - 최근 재고 파일에 없는 품목은 가용재고를 **"확인 필요"**(null)로 표시하고 음수로 계산하지 않는다. 파일에 0으로 있는 품목은 "0박스". 둘을 구분한다.
 - 재고 배치에는 **집계 기준 시각 `stockAsOf`**(담당자 입력, ERP 조회 시각)와 **반영 시각 `uploadedAt`**이 따로 있다. 화면은 "집계 기준 11-03 09:00 · 반영 11-03 09:12"로 표시하고, 집계 시각이 없으면 "집계 시각 미확인", 반영 후 24시간(`config/stock.ts STALE_AFTER_HOURS`)이 지나면 "갱신 지연" 배지.
@@ -50,8 +53,8 @@
 | --- | --- | --- |
 | `Product` | code (PK), name, capacity(예: "2L"), unitsPerBox, boxW, boxD, boxH (mm), volumeM3 (계산), isActive | 제품 마스터. 엑셀로 일괄 등록 |
 | `StockSnapshot` | id, productCode, qtyBox, uploadedAt, stockAsOf, uploadedBy, batchId | 업로드 1회 = batchId 1개. 같은 날 재업로드 시 새 batch가 기준점, 이전 batch는 보관 |
-| `UploadBatch` | id, kind, fileName, fileHash, rowCount, uploadedAt, uploadedBy, stockAsOf, defectApplied | 업로드 1회. fileHash로 같은 파일 재업로드 차단 |
-| `StockAdjustment` | id, productCode, qtyBox, reason (DEFECT / SHIPMENT / ORDER / OTHER), memo, createdBy, createdAt, cancelledAt | 취소는 삭제가 아니라 cancelledAt 기록 |
+| `UploadBatch` | id, kind, fileName, fileHash, rowCount, uploadedAt, uploadedBy, stockAsOf, defectApplied, mode (REPLACE/MERGE), revertedAt | 업로드 1회. fileHash로 같은 파일 재업로드 차단. 복구된 배치는 기준에서 제외 |
+| `StockAdjustment` | id, productCode, qtyBox, reason (DEFECT / SHIPMENT / ORDER / OTHER), memo, createdBy, createdAt, cancelledAt, orderId, requestId, correctsId, correctionReason | 취소는 삭제가 아니라 cancelledAt 기록 |
 | `ProductionHistory` | id, productCode, date, qtyGood, qtyDefect | ERP 생산실적 엑셀 |
 | `ShipmentHistory` | id, productCode, date, customerCode, qtyBox | ERP 출고실적 엑셀 |
 | `Customer` | code (PK), name, type (B2B / B2C), orderUnit (VEHICLE / BOX) | 거래처 마스터 |
@@ -68,6 +71,8 @@ MVP = F1 → F2 → F3 (F8은 삭제). 이 셋이 돌아가면 현재 임시 도
 - 컬럼이 안 맞으면 어느 컬럼이 문제인지 화면에 보여주고 저장하지 않는다 (직전 기준 유지).
 - 행 단위 오류(수량이 숫자 아님 등)는 자동으로 건너뛰지 않는다. "N행 오류, 그대로 진행하면 해당 품목은 확인 필요가 됩니다"를 보여주고 확인받은 뒤에만 저장.
 - 재고 탭 추가 입력: 집계 기준 시각(기본값 지금), 사후 불량 반영 여부(예/아니오).
+- 재고 파일을 고르면 저장 전 **미리보기**: 기존 기준 대비 신규/변경/누락 품목 수, 오류 행. 누락 처리는 **전체 교체**(누락 → 확인 필요) 또는 **있는 품목만 갱신**(MERGE, 직전 수량 이월) 선택. 저장 후 "이전 기준재고로 복구"(`revertedAt`) 가능.
+- 출고실적 업로드 시 같은 날·같은 품번의 수동 출고(F2)가 있으면 경고만 (저장은 됨).
 - 생산실적·출고실적·제품 마스터·거래처도 같은 화면에서 탭으로 업로드.
 - **수용 기준:** 업로드 후 10초 내 반영. 같은 파일 두 번 올려도 중복 생성 안 됨(batchId로 대체).
 
@@ -78,7 +83,8 @@ MVP = F1 → F2 → F3 (F8은 삭제). 이 셋이 돌아가면 현재 임시 도
 
 ### F3. 가용재고 조회 (영업 기본 화면)
 - 검색창 하나. 품목명·코드 부분일치 (예: "2L" 입력 시 2L 관련 품목 전부).
-- 결과 행: 품목명, **가용재고(박스)** 크게, 기초재고, 오늘 차감 합, 마지막 업로드 시각.
+- 결과 행: 품목명, 품목 정보 줄("품번 · 용량 · 1박스당 N개 · 팀"), **가용재고(박스)** 크게, 기초재고, 오늘 차감 합, 예상 소진일수.
+- 홈: 관리 대상 / 이번 기준재고 확인 / 미확인 품목 수. 저재고 = 확인된 품목 중 **예상 소진일수 ≤ 3일**(`config/stock.ts LOW_DAYS_THRESHOLD`). 소진일수 = 가용재고 ÷ 최근 30일 일평균 출고(출고실적 정상·내수, 실적 마지막 날짜 기준). 출고 이력 없으면 "산정 불가".
 - 품목 탭하면 변동 이력 + (F5 구현 후) 예상 소진일수.
 - **수용 기준:** 검색 후 2초 내 표시. 수량이 담당자 수동 엑셀과 일치.
 

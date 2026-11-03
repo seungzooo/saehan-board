@@ -46,6 +46,8 @@ model UploadBatch {
   uploadedBy    String
   stockAsOf     DateTime? // (STOCK) 파일의 집계 기준 시각. 담당자 입력, 없으면 "집계 시각 미확인"
   defectApplied Boolean   @default(false) // (STOCK) 파일에 사후 불량이 반영되어 있음 → 이전 불량 차감 리셋
+  mode          String    @default("REPLACE") // (STOCK) REPLACE 전체 교체 | MERGE 있는 품목만 갱신(나머지는 직전 배치에서 이월)
+  revertedAt    DateTime? // (STOCK) "이전 기준재고로 복구" 시각. 복구된 배치는 기준점에서 제외
 
   snapshots   StockSnapshot[]
   productions ProductionHistory[]
@@ -80,13 +82,19 @@ model StockAdjustment {
   createdAt   DateTime  @default(now())
   cancelledAt DateTime?
   orderId     Int? // (SHIPMENT) 이 출고가 이행한 수주(ORDER) 변동. 연결되면 해당 수주 차감은 해제 (이중 차감 방지)
+  requestId   String?   @unique // 클라이언트 요청 ID — 저장 연타·동시 입력 멱등 처리
+  correctsId  Int? // 정정 기록: 원기록 id. 원기록은 그대로 두고 차이(qtyBox, 음수 가능)를 이 행에 기록
+  correctionReason String? // 정정 사유 (누가·언제는 createdBy·createdAt)
 
-  product    Product           @relation(fields: [productCode], references: [code])
-  order      StockAdjustment?  @relation("OrderFulfilment", fields: [orderId], references: [id])
-  shipments  StockAdjustment[] @relation("OrderFulfilment")
+  product     Product           @relation(fields: [productCode], references: [code])
+  order       StockAdjustment?  @relation("OrderFulfilment", fields: [orderId], references: [id])
+  shipments   StockAdjustment[] @relation("OrderFulfilment")
+  corrects    StockAdjustment?  @relation("Correction", fields: [correctsId], references: [id])
+  corrections StockAdjustment[] @relation("Correction")
 
   @@index([productCode, createdAt])
   @@index([orderId])
+  @@index([correctsId])
 }
 
 /// ERP 생산실적. 전표구분 32(재가공투입)는 생산이 아니므로 집계 시 제외

@@ -1,7 +1,7 @@
 import { ADJUSTMENT_REASONS, REASON_LABEL } from "@/lib/availableStock";
 import { formatDateTime } from "@/lib/format";
 import { getProductDetail } from "@/lib/stock";
-import { availableText, availableTone, BasisLine, productInfoText } from "@/lib/stockDisplay";
+import { availableText, availableTone, BasisLine, daysText, productInfoText } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -17,7 +17,7 @@ export default async function ProductDetailPage({
   const [{ code }, { q }] = await Promise.all([params, searchParams]);
   const detail = await getProductDetail(decodeURIComponent(code));
   if (!detail) notFound();
-  const { product, stock, history } = detail;
+  const { product, stock, days, history } = detail;
   const needsCheck = stock.available === null;
   // 최신 파일에 없는 품목에는 파일 시각을 보여주지 않는다 — "재고 확인 필요"만
   const basis = !needsCheck && stock.uploadedAt ? { uploadedAt: stock.uploadedAt, stockAsOf: stock.stockAsOf, batchId: "" } : null;
@@ -54,6 +54,15 @@ export default async function ProductDetailPage({
           ))}
           <dt className="text-zinc-500">오늘 차감</dt>
           <dd className="text-right tabular-nums">{stock.todayDeduction.toLocaleString()}</dd>
+          <dt className="text-zinc-500">예상 소진</dt>
+          <dd className="text-right tabular-nums">
+            {daysText(days)}
+            {days.avgPerDay !== null && days.avgPerDay > 0 && (
+              <span className="ml-1 text-xs text-zinc-500">
+                (일평균 {Number(days.avgPerDay.toFixed(1))}박스, 출고실적 {days.basisTo} 기준)
+              </span>
+            )}
+          </dd>
           {!needsCheck && (
             <>
               <dt className="text-zinc-500">재고 집계 기준</dt>

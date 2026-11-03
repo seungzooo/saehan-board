@@ -1,5 +1,6 @@
 import { listOpenOrders, listRecentAdjustments } from "@/lib/adjust";
 import { prisma } from "@/lib/db";
+import { computeForProducts } from "@/lib/stock";
 import AdjustForm from "./AdjustForm";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function AdjustPage({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
   const { code } = await searchParams;
 
-  const [preselected, recent, openOrders] = await Promise.all([
+  const [preselected, recent, openOrders, stocks] = await Promise.all([
     code
       ? prisma.product.findUnique({
           where: { code },
@@ -16,12 +17,14 @@ export default async function AdjustPage({ searchParams }: { searchParams: Promi
       : Promise.resolve(null),
     listRecentAdjustments(50),
     code ? listOpenOrders(code) : Promise.resolve([]),
+    code ? computeForProducts([code]) : Promise.resolve(new Map()),
   ]);
+  const initialStock = code ? (stocks.get(code) ?? null) : null;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
       <h1 className="text-xl font-bold">변동 입력</h1>
-      <AdjustForm preselected={preselected} initialOpenOrders={openOrders} initialRecent={recent} />
+      <AdjustForm preselected={preselected} initialStock={initialStock} initialOpenOrders={openOrders} initialRecent={recent} />
     </main>
   );
 }

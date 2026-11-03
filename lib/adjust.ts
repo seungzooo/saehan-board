@@ -12,6 +12,8 @@ export type AdjustmentItem = {
   createdAt: string; // ISO
   cancelledAt: string | null;
   orderId: number | null; // (출고) 이행한 수주 id
+  correctsId: number | null; // 정정 기록이면 원기록 id
+  correctionReason: string | null;
 };
 
 /** 아직 출고로 이행되지 않은 수주 (미취소, 연결된 미취소 출고 없음) — 출고 입력 시 선택용 */
@@ -47,6 +49,8 @@ export function toItem(r: {
   createdAt: Date;
   cancelledAt: Date | null;
   orderId: number | null;
+  correctsId: number | null;
+  correctionReason: string | null;
   product: { name: string };
 }): AdjustmentItem {
   return {
@@ -60,5 +64,7 @@ export function toItem(r: {
     createdAt: r.createdAt.toISOString(),
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     orderId: r.orderId,
+    correctsId: r.correctsId,
+    correctionReason: r.correctionReason,
   };
 }

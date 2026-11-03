@@ -3,13 +3,19 @@ import { STALE_AFTER_HOURS } from "@/config/stock";
 import type { AvailableStock } from "@/lib/availableStock";
 import { formatDateTime, formatShort, isStale } from "@/lib/format";
 import { productCapacityLabel } from "@/lib/search";
-import type { StockBasis } from "@/lib/stock";
+import type { DaysOfStock, StockBasis } from "@/lib/stock";
 
 export const NEEDS_CHECK = "재고 확인 필요";
 
 /** 가용재고 문자열: null → "재고 확인 필요", 숫자 → "1,234" */
 export function availableText(s: AvailableStock): string {
   return s.available === null ? NEEDS_CHECK : s.available.toLocaleString();
+}
+
+/** 예상 소진일수: "2.5일" / "산정 불가" */
+export function daysText(d: DaysOfStock): string {
+  if (d.days === null) return "산정 불가";
+  return `${d.days >= 10 ? Math.round(d.days) : Number(d.days.toFixed(1))}일`;
 }
 
 /** 수량 색상: 확인 필요=주황, 0 이하=빨강, 그 외=검정 */

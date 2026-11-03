@@ -2,19 +2,19 @@
 
 import type { UploadKind } from "@/config/excel-mapping";
 import type { RowError } from "@/lib/excel/import";
-import type { UploadResponse } from "@/lib/excel/upload";
+import type { StockMode, StockPreview, UploadResponse } from "@/lib/excel/upload";
 import { formatDateTime, seoulParts } from "@/lib/format";
 import { isSampleFileName } from "@/lib/stockDisplay";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
-import { uploadAction } from "./actions";
+import { previewStockAction, uploadAction } from "./actions";
 
 const TABS: { kind: UploadKind; label: string; hint: string }[] = [
   {
     kind: "STOCK",
     label: "재고",
-    hint: "ERP 재고 엑셀. 필수 컬럼: 품번, 재고수량 (박스 단위). 품명/규격은 선택. 컬럼명에 괄호·단위가 붙어도 됩니다 — 예: 재고수량(박스), 품 번",
+    hint: "ERP 재고 엑셀. 필수 컬럼: 품번, 재고수량 (박스 단위). 품명/규격은 선택. 컬럼명에 괄호·단위가 붙어도 됩니다 — 예: 재고수량(박스), 품 번. 품번은 제품 마스터에 있어야 합니다.",
   },
   {
     kind: "PRODUCTION",
@@ -41,12 +41,32 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   const [file, setFile] = useState<File | null>(null);
   const [asOf, setAsOf] = useState(nowSeoulLocal);
   const [defectApplied, setDefectApplied] = useState<"yes" | "no">("no");
+  const [mode, setMode] = useState<StockMode>("REPLACE");
+  const [preview, setPreview] = useState<StockPreview | null>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [lastFileName, setLastFileName] = useState("");
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const tab = TABS.find((t) => t.kind === kind)!;
+
+  function reset() {
+    setFile(null);
+    setPreview(null);
+    setResult(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function onFile(f: File | null) {
+    setFile(f);
+    setResult(null);
+    setPreview(null);
+    if (f && kind === "STOCK") {
+      const fd = new FormData();
+      fd.set("file", f);
+      startTransition(async () => setPreview(await previewStockAction(fd)));
+    }
+  }
 
   function send(allowRowErrors: boolean) {
     if (!file) return;
@@ -56,6 +76,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
     if (kind === "STOCK") {
       fd.set("stockAsOf", seoulLocalToIso(asOf));
       fd.set("defectApplied", defectApplied);
+      fd.set("mode", mode);
     }
     if (allowRowErrors) fd.set("allowRowErrors", "1");
     setLastFileName(file.name);
@@ -65,12 +86,16 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
       setResult(res);
       if (res.status === "saved") {
         setFile(null);
+        setPreview(null);
         if (inputRef.current) inputRef.current.value = "";
         setAsOf(nowSeoulLocal());
         router.refresh(); // 서버 렌더된 "최근 업로드" 목록·기준 시각 갱신
       }
     });
   }
+
+  const previewOk = preview?.status === "ok" ? preview : null;
+  const canSaveStock = kind !== "STOCK" || (previewOk !== null && !previewOk.duplicate);
 
   return (
     <div className="flex flex-col gap-4">
@@ -83,7 +108,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
             aria-selected={kind === t.kind}
             onClick={() => {
               setKind(t.kind);
-              setResult(null);
+              reset();
             }}
             className={`shrink-0 rounded-md px-3 py-2 text-sm font-medium ${
               kind === t.kind ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
@@ -97,7 +122,8 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          send(false);
+          // 재고: 미리보기에 오류 행이 있으면 "확인하고 진행"과 같은 의미로 allowRowErrors
+          send(kind === "STOCK" && (previewOk?.errorCount ?? 0) > 0);
         }}
         className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-4"
       >
@@ -106,12 +132,13 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
           ref={inputRef}
           type="file"
           accept=".xls,.xlsx,.csv,.txt"
-          onChange={(e) => {
-            setFile(e.target.files?.[0] ?? null);
-            setResult(null);
-          }}
+          onChange={(e) => onFile(e.target.files?.[0] ?? null)}
           className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
         />
+
+        {kind === "STOCK" && file && (
+          <PreviewCard preview={preview} pending={pending && !preview} mode={mode} onMode={setMode} />
+        )}
 
         {kind === "STOCK" && (
           <div className="flex flex-col gap-3 rounded-md bg-zinc-50 p-3">
@@ -125,7 +152,8 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
                 className="h-11 rounded-md border border-zinc-300 bg-white px-3 text-base"
               />
               <span className="text-xs text-zinc-500">
-                ERP에서 재고를 조회한 시각. 기본값은 지금. 비우면 &ldquo;집계 시각 미확인&rdquo;으로 표시됩니다.
+                ERP에서 재고를 조회한 시각. 기본값은 지금. 비우면 &ldquo;집계 시각 미확인&rdquo;으로 표시됩니다. 이 시각 이전에 입력한
+                출고·수주는 파일이 이미 반영한 것으로 보고 차감을 해제합니다.
               </span>
             </label>
             <fieldset className="flex flex-col gap-1 text-sm">
@@ -161,10 +189,10 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
 
         <button
           type="submit"
-          disabled={!file || pending}
+          disabled={!file || pending || !canSaveStock}
           className="h-12 rounded-md bg-blue-600 text-base font-semibold text-white disabled:bg-zinc-300"
         >
-          {pending ? "업로드 중…" : `${tab.label} 업로드`}
+          {pending ? "처리 중…" : kind === "STOCK" ? (mode === "MERGE" ? "있는 품목만 갱신으로 저장" : "전체 교체로 저장") : `${tab.label} 업로드`}
         </button>
       </form>
 
@@ -173,6 +201,110 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   );
 }
 
+// ───────────────────────── 재고 미리보기 ─────────────────────────
+
+function PreviewCard({
+  preview,
+  pending,
+  mode,
+  onMode,
+}: {
+  preview: StockPreview | null;
+  pending: boolean;
+  mode: StockMode;
+  onMode: (m: StockMode) => void;
+}) {
+  if (pending || !preview) return <p className="text-sm text-zinc-500">파일을 읽는 중…</p>;
+  if (preview.status === "mapping-error") {
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="font-semibold">컬럼이 맞지 않습니다. 저장할 수 없습니다.</p>
+        <p className="mt-1">찾지 못한 필수 컬럼: {preview.missing.join(" / ")}</p>
+        <p className="mt-1 break-all font-mono text-xs">{preview.headerFound.join(" | ")}</p>
+      </div>
+    );
+  }
+  if (preview.status === "error") {
+    return <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{preview.message}</p>;
+  }
+  const p = preview;
+  const ec = errorCounts(p.errors);
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+      {p.duplicate && (
+        <p className="font-semibold text-amber-800">
+          이미 업로드된 파일입니다 ({formatDateTime(p.duplicate.uploadedAt)}). 다시 저장할 수 없습니다.
+        </p>
+      )}
+      <p className="font-semibold">
+        기존 대비 신규 {p.added.toLocaleString()} / 변경 {p.changed.toLocaleString()} / 누락 {p.missing.toLocaleString()} 품목
+        <span className="ml-1 font-normal text-blue-900">(동일 {p.same.toLocaleString()} · 파일 정상 {p.fileProducts.toLocaleString()})</span>
+      </p>
+      <p className="text-xs text-blue-900">
+        {p.previousBatch
+          ? `기존 기준: ${p.previousBatch.fileName} · ${formatDateTime(p.previousBatch.uploadedAt)} · ${p.previousBatch.products.toLocaleString()}품목`
+          : "기존 기준재고 없음 — 첫 업로드"}
+      </p>
+      {p.errorCount > 0 && (
+        <p className="text-red-800">
+          오류 {p.errorCount.toLocaleString()}행 — 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
+          {ec.other > 0 && ` · 기타 ${ec.other.toLocaleString()}`}. 저장하면 이 행들은 제외되고 해당 품목은 &ldquo;재고 확인 필요&rdquo;가 됩니다.
+        </p>
+      )}
+      <ErrorDetails errors={p.errors} title={`문제 행 ${p.errorCount.toLocaleString()}건 펼쳐보기`} />
+      {p.changedSample.length > 0 && (
+        <details>
+          <summary className="cursor-pointer">변경 품목 예시 ({Math.min(10, p.changed)}건)</summary>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {p.changedSample.map((c) => (
+              <li key={c.code}>
+                {c.name} ({c.code}): {c.before.toLocaleString()} → {c.after.toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {p.missing > 0 && (
+        <details>
+          <summary className="cursor-pointer">누락 품목 예시 ({Math.min(10, p.missing)}건)</summary>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {p.missingSample.map((m) => (
+              <li key={m.code}>
+                {m.name} ({m.code}): 기존 {m.qtyBox.toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <fieldset className="mt-1">
+        <legend className="text-xs text-blue-900">누락 품목 처리</legend>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          {(
+            [
+              ["REPLACE", "전체 교체", "파일에 없는 품목은 '재고 확인 필요'"],
+              ["MERGE", "있는 품목만 갱신", "파일에 없는 품목은 기존 수량 유지"],
+            ] as const
+          ).map(([v, label, desc]) => (
+            <label
+              key={v}
+              className={`flex cursor-pointer flex-col items-center rounded-md border px-2 py-2 text-center ${
+                mode === v ? "border-blue-600 bg-blue-600 text-white" : "border-zinc-300 bg-white text-zinc-700"
+              }`}
+            >
+              <input type="radio" name="mode" value={v} checked={mode === v} onChange={() => onMode(v)} className="sr-only" />
+              <span className="text-sm font-semibold">{label}</span>
+              <span className={`text-xs ${mode === v ? "text-blue-100" : "text-zinc-500"}`}>{desc}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <p className="text-xs text-blue-900">저장 뒤에도 아래 &ldquo;이전 기준재고로 복구&rdquo;로 되돌릴 수 있습니다.</p>
+    </div>
+  );
+}
+
+// ───────────────────────── 결과 ─────────────────────────
+
 /** 업로드 종류별 한 줄 요약 — "재고 60개 품목 갱신, 반영 시각 04:35" */
 function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved" }>): string {
   const x = r.result;
@@ -180,7 +312,7 @@ function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved
   const time = formatDateTime(r.uploadedAt).slice(11);
   switch (kind) {
     case "STOCK":
-      return `재고 ${n(x.inserted)}개 품목 갱신${x.newProducts ? ` (신규 품목 ${n(x.newProducts)})` : ""}, 반영 시각 ${time}`;
+      return `재고 ${n(x.inserted)}개 품목 갱신${x.carried ? ` + 이월 ${n(x.carried)}` : ""}, 반영 시각 ${time}`;
     case "SALES":
     case "PRODUCTION":
       return `${kind === "SALES" ? "출고" : "생산"}실적 ${n(x.inserted)}행 추가${x.duplicates ? `, 이미 있던 ${n(x.duplicates)}행 건너뜀` : ""}${
@@ -204,12 +336,7 @@ function NextAction({ kind }: { kind: UploadKind }) {
   }
   if (kind === "SALES" || kind === "PRODUCTION") {
     return (
-      <button
-        type="button"
-        disabled
-        className={`${btn} cursor-not-allowed bg-zinc-200 text-zinc-500`}
-        title="F5 추이 분석 구현 후 열립니다"
-      >
+      <button type="button" disabled className={`${btn} cursor-not-allowed bg-zinc-200 text-zinc-500`} title="F5 추이 분석 구현 후 열립니다">
         추이 보기 → (준비 중)
       </button>
     );
@@ -233,7 +360,7 @@ function errorCounts(errors: RowError[]) {
 function ErrorDetails({ errors, title }: { errors: RowError[]; title: string }) {
   if (errors.length === 0) return null;
   return (
-    <details className="mt-2">
+    <details>
       <summary className="cursor-pointer font-medium text-red-700">{title}</summary>
       <ul className="mt-1 max-h-60 list-disc overflow-y-auto pl-5 text-red-800">
         {errors.slice(0, 200).map((e) => (
@@ -249,9 +376,7 @@ function ErrorDetails({ errors, title }: { errors: RowError[]; title: string }) 
 
 function SampleNote({ fileName }: { fileName: string }) {
   if (!isSampleFileName(fileName)) return null;
-  return (
-    <span className="ml-2 inline-block rounded bg-purple-100 px-1.5 py-0.5 text-xs font-semibold text-purple-800">샘플</span>
-  );
+  return <span className="ml-2 inline-block rounded bg-purple-100 px-1.5 py-0.5 text-xs font-semibold text-purple-800">샘플</span>;
 }
 
 function ResultCard({
@@ -283,12 +408,18 @@ function ResultCard({
           <li>
             정상 반영 {x.inserted.toLocaleString()} · 품번 불일치 {ec.code.toLocaleString()} · 수량 누락 {ec.qty.toLocaleString()}
             {ec.other > 0 && ` · 기타 오류 ${ec.other.toLocaleString()}`}
+            {(x.carried ?? 0) > 0 && ` · 이월 ${x.carried!.toLocaleString()}`}
             {(x.duplicates ?? 0) > 0 && ` · 중복 건너뜀 ${x.duplicates!.toLocaleString()}`}
-            {(x.updated ?? 0) > 0 && ` · 갱신 ${x.updated!.toLocaleString()}`}
+            {(x.updated ?? 0) > 0 && kind !== "STOCK" && ` · 갱신 ${x.updated!.toLocaleString()}`}
             {x.newProducts + x.newCustomers > 0 && ` · 신규 ${(x.newProducts + x.newCustomers).toLocaleString()}`}
           </li>
           {x.note && <li>{x.note}</li>}
         </ul>
+        {x.warnings?.map((w) => (
+          <p key={w} className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
+            ⚠ {w}
+          </p>
+        ))}
         <ErrorDetails errors={x.errors} title={`문제 행 ${x.errors.length.toLocaleString()}건 펼쳐보기 (해당 품목은 "재고 확인 필요")`} />
         <div className="mt-3">
           <NextAction kind={kind} />

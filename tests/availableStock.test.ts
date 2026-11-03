@@ -153,4 +153,52 @@ describe("computeAvailableStock", () => {
       expect(computeAvailableStock(base, [order, ship]).available).toBe(85);
     });
   });
+
+  describe("전날 출고 → 다음날 기준재고 업로드 (이중 차감 없음)", () => {
+    const dayBefore = adj(20, "SHIPMENT", "2026-01-10T15:00"); // 전날 15:00 수동 출고
+    const afterAsOf = adj(5, "SHIPMENT", "2026-01-11T10:00"); // 집계 이후 출고
+
+    it("다음날 09:00 집계 파일(이미 전날 출고 반영) 업로드 → 전날 출고는 차감하지 않는다", () => {
+      const r = computeAvailableStock(
+        { qtyBox: 80, uploadedAt: T("2026-01-11T09:12"), stockAsOf: T("2026-01-11T09:00") },
+        [dayBefore],
+      );
+      expect(r.available).toBe(80);
+      expect(r.deductions.SHIPMENT).toBe(0);
+    });
+
+    it("기준 시각 이후 출고는 남는다 (80 − 5 = 75)", () => {
+      const r = computeAvailableStock(
+        { qtyBox: 80, uploadedAt: T("2026-01-11T09:12"), stockAsOf: T("2026-01-11T09:00") },
+        [dayBefore, afterAsOf],
+      );
+      expect(r.available).toBe(75);
+      expect(r.deductions.SHIPMENT).toBe(5);
+    });
+
+    it("집계 09:00 ~ 반영 09:12 사이에 입력한 출고는 파일에 없으므로 차감 유지", () => {
+      const between = adj(3, "SHIPMENT", "2026-01-11T09:05");
+      const r = computeAvailableStock(
+        { qtyBox: 80, uploadedAt: T("2026-01-11T09:12"), stockAsOf: T("2026-01-11T09:00") },
+        [dayBefore, between],
+      );
+      expect(r.available).toBe(77);
+    });
+
+    it("집계 시각을 모르면 반영 시각이 기준점", () => {
+      const between = adj(3, "SHIPMENT", "2026-01-11T09:05");
+      const r = computeAvailableStock({ qtyBox: 80, uploadedAt: T("2026-01-11T09:12"), stockAsOf: null }, [dayBefore, between]);
+      expect(r.available).toBe(80); // 09:05 출고도 반영 시각(09:12) 이전이라 리셋
+    });
+  });
+
+  describe("정정 기록", () => {
+    it("원기록 20에 정정 −5(차이)를 더하면 15만 차감된다", () => {
+      const original = { ...adj(20, "SHIPMENT", "2026-01-10T10:00"), id: 1 };
+      const correction = { ...adj(-5, "SHIPMENT", "2026-01-10T11:00"), id: 2 };
+      const r = computeAvailableStock({ qtyBox: 100, uploadedAt: T("2026-01-10T09:00") }, [original, correction]);
+      expect(r.available).toBe(85);
+      expect(r.deductions.SHIPMENT).toBe(15);
+    });
+  });
 });

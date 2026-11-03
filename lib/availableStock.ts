@@ -2,10 +2,15 @@
  * 가용재고 산식 (CLAUDE.md "가용재고 산식")
  *
  *   가용재고 = 기초재고(최근 재고 파일)
- *            − Σ 불량 차감  (불량 리셋 시점 이후. 리셋 시점 = 가장 최근 "사후 불량 반영됨" 재고 파일의 반영 시각)
- *            − Σ 출고 차감  (최근 파일 반영 이후)
- *            − Σ 수주       (최근 파일 반영 이후)
- *            − Σ 기타       (최근 파일 반영 이후)
+ *            − Σ 불량 차감  (불량 리셋 시점 이후. 리셋 시점 = 가장 최근 "사후 불량 반영됨" 재고 파일의 기준 시각)
+ *            − Σ 출고 차감  (기준 시각 이후)
+ *            − Σ 수주       (기준 시각 이후)
+ *            − Σ 기타       (기준 시각 이후)
+ *
+ *   기준 시각 = 파일의 집계 기준 시각(stockAsOf). 모르면 파일 반영 시각(uploadedAt).
+ *   → 전날 입력한 출고는 다음날 파일이 이미 반영했으므로 사라지고(이중 차감 없음),
+ *     집계 시각 이후에 입력한 출고는 파일에 없으므로 계속 차감된다.
+ *   정정 기록(correctsId)은 차이값(음수 가능)으로 들어오므로 그냥 합산한다.
  *
  * - 취소된 변동(cancelledAt != null)은 모두 무시한다.
  * - 수주(ORDER)는 그 수주를 이행한 출고(SHIPMENT, orderId 연결, 미취소)가 있으면 차감하지 않는다 (이중 차감 방지).
@@ -27,10 +32,15 @@ export const REASON_LABEL: Record<AdjustmentReason, string> = {
 
 export type SnapshotLike = {
   qtyBox: number;
-  uploadedAt: Date; // 앱 반영 시각 — 출고·수주·기타 차감의 기준점
-  stockAsOf?: Date | null; // 파일의 집계 기준 시각 (표시용)
+  uploadedAt: Date; // 파일 반영 시각
+  stockAsOf?: Date | null; // 파일의 집계 기준 시각 — 있으면 이것이 차감 기준점
   defectResetAt?: Date | null; // 이 시각 이전 불량 차감은 무시 (null이면 전부 누적)
 } | null;
+
+/** 차감 기준점: 집계 기준 시각이 있으면 그것, 없으면 반영 시각 */
+export function cutoffOf(s: { uploadedAt: Date; stockAsOf?: Date | null }): Date {
+  return s.stockAsOf ?? s.uploadedAt;
+}
 
 export type AdjustmentLike = {
   id?: number;
@@ -60,7 +70,7 @@ export function computeAvailableStock(
   opts: ComputeOptions = {},
 ): AvailableStock {
   const now = opts.now ?? new Date();
-  const since = snapshot?.uploadedAt ?? null;
+  const since = snapshot ? cutoffOf(snapshot) : null;
   const defectResetAt = snapshot?.defectResetAt ?? null;
 
   const deductions: Record<AdjustmentReason, number> = { DEFECT: 0, SHIPMENT: 0, ORDER: 0, OTHER: 0 };

@@ -5,6 +5,7 @@ import { formatDateTime } from "@/lib/format";
 import { getStockBasis } from "@/lib/stock";
 import { BasisLine } from "@/lib/stockDisplay";
 import RecentUploads from "./RecentUploads";
+import RevertButton from "./RevertButton";
 import UploadForm from "./UploadForm";
 
 export const dynamic = "force-dynamic";
@@ -13,10 +14,13 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
   const { kind } = await searchParams;
   const initialKind = (Object.keys(UPLOAD_KIND_LABEL).includes(kind ?? "") ? kind : "STOCK") as UploadKind;
 
-  const [batches, basis] = await Promise.all([
-    prisma.uploadBatch.findMany({ orderBy: { uploadedAt: "desc" }, take: 30 }),
+  const [batches, basis, stockBatches] = await Promise.all([
+    prisma.uploadBatch.findMany({ where: { revertedAt: null }, orderBy: { uploadedAt: "desc" }, take: 30 }),
     getStockBasis(),
+    prisma.uploadBatch.findMany({ where: { kind: "STOCK", revertedAt: null }, orderBy: { uploadedAt: "desc" }, take: 2 }),
   ]);
+  const latestStock = stockBatches[0] ?? null;
+  const previousStock = stockBatches[1] ?? null;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-4">
@@ -27,6 +31,13 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
       </header>
 
       <UploadForm initialKind={initialKind} />
+
+      {latestStock && (
+        <RevertButton
+          batch={{ id: latestStock.id, fileName: latestStock.fileName, uploadedAt: latestStock.uploadedAt.toISOString() }}
+          previous={previousStock ? { fileName: previousStock.fileName, uploadedAt: previousStock.uploadedAt.toISOString() } : null}
+        />
+      )}
 
       <RecentUploads
         items={batches.map((b) => ({

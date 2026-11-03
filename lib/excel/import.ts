@@ -34,6 +34,8 @@ export type ImportResult = {
   newCustomers: number;
   updated?: number; // 마스터 업로드: 기존 행 갱신 수 / 재고: 기존 품목 수
   duplicates?: number; // 실적 업로드: 이미 있어 건너뛴 행
+  carried?: number; // 재고 MERGE: 파일에 없어 직전 배치에서 이월한 품목 수
+  warnings?: string[]; // 저장은 됐지만 확인이 필요한 사항
   period?: { from: string; to: string };
   note?: string;
 };
@@ -103,11 +105,18 @@ async function ensureCustomers(db: Db, names: Set<string>): Promise<number> {
 
 // ───────────────────────── STOCK ─────────────────────────
 
-export async function importStock(
-  db: Db,
-  sheet: string[][],
-  ctx: { batchId: string; uploadedBy: string; uploadedAt: Date; stockAsOf: Date | null },
-): Promise<ImportOutcome> {
+export type StockImportCtx = {
+  batchId: string;
+  uploadedBy: string;
+  uploadedAt: Date;
+  stockAsOf: Date | null;
+  /** REPLACE: 파일에 없는 품목은 확인 필요. MERGE: 직전 배치 수량을 이월 */
+  mode?: "REPLACE" | "MERGE";
+  /** MERGE 이월 원본 배치 id (직전 기준 배치) */
+  carryFromBatchId?: string | null;
+};
+
+export async function importStock(db: Db, sheet: string[][], ctx: StockImportCtx): Promise<ImportOutcome> {
   const mapped = applyMapping(sheet, STOCK_MAPPING);
   if (!mapped.ok) return mapped;
   const errors: RowError[] = [];
@@ -153,16 +162,29 @@ export async function importStock(
     uploadedBy: ctx.uploadedBy,
     batchId: ctx.batchId,
   }));
+  // MERGE: 파일에 없는 품목은 직전 배치 수량을 그대로 이월 (확인 필요가 되지 않도록)
+  let carried = 0;
+  if (ctx.mode === "MERGE" && ctx.carryFromBatchId) {
+    const prev = await db.stockSnapshot.findMany({
+      where: { batchId: ctx.carryFromBatchId, productCode: { notIn: [...qty.keys()] } },
+      select: { productCode: true, qtyBox: true },
+    });
+    for (const p of prev) {
+      data.push({ productCode: p.productCode, qtyBox: p.qtyBox, uploadedAt: ctx.uploadedAt, stockAsOf: ctx.stockAsOf, uploadedBy: ctx.uploadedBy, batchId: ctx.batchId });
+    }
+    carried = prev.length;
+  }
   await chunked(data, (c) => db.stockSnapshot.createMany({ data: c }));
   return {
     ok: true,
-    inserted: data.length,
+    inserted: data.length - carried,
     skipped,
     errors,
     newProducts,
     newCustomers: 0,
-    updated: data.length - newProducts,
-    note: mapped.rows.length - skipped !== data.length ? "같은 품번 행은 합산했습니다." : undefined,
+    updated: data.length - carried,
+    carried,
+    note: mapped.rows.length - skipped !== data.length - carried ? "같은 품번 행은 합산했습니다." : undefined,
   };
 }
 
@@ -242,6 +264,7 @@ export async function importSales(db: Db, sheet: string[][], ctx: { batchId?: st
   });
   const duplicates = rows.length - inserted;
   await refreshCustomerTypes(db);
+  const warnings = await manualShipmentOverlapWarnings(db, rows, from, to);
   return {
     ok: true,
     inserted,
@@ -250,9 +273,36 @@ export async function importSales(db: Db, sheet: string[][], ctx: { batchId?: st
     newProducts,
     newCustomers,
     duplicates,
+    warnings,
     period: { from: isoOf(from), to: isoOf(to) },
     note: duplicates > 0 ? `이미 있는 ${duplicates.toLocaleString()}행(같은 출고일자·품번·전표번호)은 건너뛰었습니다.` : undefined,
   };
+}
+
+/**
+ * 수동 입력한 출고(F2 SHIPMENT)와 업로드한 출고실적이 같은 날·같은 품번으로 겹치면 경고.
+ * 수동 출고는 다음 재고 파일에서 리셋되므로 저장은 막지 않고 알려만 준다.
+ */
+async function manualShipmentOverlapWarnings(
+  db: Db,
+  rows: Array<{ productCode: string; date: Date }>,
+  from: Date,
+  to: Date,
+): Promise<string[]> {
+  const manual = await db.stockAdjustment.findMany({
+    where: { reason: "SHIPMENT", cancelledAt: null, createdAt: { gte: from, lt: new Date(to.getTime() + 86400_000) } },
+    select: { id: true, productCode: true, qtyBox: true, createdAt: true },
+  });
+  if (manual.length === 0) return [];
+  const fileKeys = new Set(rows.map((r) => `${r.productCode}|${r.date.toISOString().slice(0, 10)}`));
+  const seoulDay = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
+  const hits = manual.filter((m) => fileKeys.has(`${m.productCode}|${seoulDay(m.createdAt)}`));
+  if (hits.length === 0) return [];
+  const sample = hits.slice(0, 5).map((h) => `${h.productCode} ${seoulDay(h.createdAt)} −${h.qtyBox}`).join(", ");
+  return [
+    `수동 입력한 출고 ${hits.length}건이 업로드한 출고실적과 같은 날·같은 품번으로 겹칩니다 (${sample}${hits.length > 5 ? " 외" : ""}). ` +
+      "수동 출고는 다음 재고 파일 반영 시 리셋되지만, 그 전까지 이중 차감일 수 있으니 확인하세요.",
+  ];
 }
 
 /** 분류표를 받기 전 기본값: 5년 출고 건수 100건 초과 = B2B. MANUAL 분류는 건드리지 않는다 */
