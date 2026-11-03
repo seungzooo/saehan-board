@@ -295,3 +295,104 @@ class RowErrorsAbort extends Error {
     super("row errors");
   }
 }
+
+// ───────────────────────── 업로드 상세 · 취소 ─────────────────────────
+
+export type BatchDiffRow = { code: string; name: string; before: number | null; after: number | null };
+
+/** 업로드 배치 상세. 재고면 직전 기준 배치(이 배치보다 앞, 복구 안 된 것)와 품목별 비교 */
+export async function getBatchDetail(id: string, db: PrismaClient = prisma) {
+  const batch = await db.uploadBatch.findUnique({ where: { id } });
+  if (!batch) return null;
+  const latestStock = await latestStockBatch(db);
+  if (batch.kind === "STOCK") {
+    const prev = await db.uploadBatch.findFirst({
+      where: { kind: "STOCK", revertedAt: null, uploadedAt: { lt: batch.uploadedAt } },
+      orderBy: { uploadedAt: "desc" },
+    });
+    const [cur, before] = await Promise.all([
+      db.stockSnapshot.findMany({ where: { batchId: batch.id }, select: { productCode: true, qtyBox: true, product: { select: { name: true } } } }),
+      prev
+        ? db.stockSnapshot.findMany({ where: { batchId: prev.id }, select: { productCode: true, qtyBox: true, product: { select: { name: true } } } })
+        : Promise.resolve([]),
+    ]);
+    const b = new Map(before.map((s) => [s.productCode, s]));
+    const a = new Map(cur.map((s) => [s.productCode, s]));
+    const rows: BatchDiffRow[] = [];
+    for (const s of cur) rows.push({ code: s.productCode, name: s.product.name, before: b.get(s.productCode)?.qtyBox ?? null, after: s.qtyBox });
+    for (const s of before) if (!a.has(s.productCode)) rows.push({ code: s.productCode, name: s.product.name, before: s.qtyBox, after: null });
+    const added = rows.filter((r) => r.before === null).length;
+    const missing = rows.filter((r) => r.after === null).length;
+    const changed = rows.filter((r) => r.before !== null && r.after !== null && r.before !== r.after).length;
+    const same = rows.filter((r) => r.before !== null && r.before === r.after).length;
+    // 변경·신규·누락을 위로, 차이 큰 순
+    const rank = (r: BatchDiffRow) => (r.before === null || r.after === null ? 1e9 : Math.abs(r.after - r.before));
+    rows.sort((x, y) => rank(y) - rank(x) || x.name.localeCompare(y.name, "ko"));
+    return {
+      batch,
+      kind: "STOCK" as const,
+      previous: prev,
+      rows,
+      counts: { added, changed, same, missing, skipped: Math.max(0, batch.rowCount - cur.length) },
+      canCancel: !batch.revertedAt && latestStock?.id === batch.id,
+      cancelBlockedReason: batch.revertedAt ? "이미 취소된 업로드입니다." : latestStock?.id !== batch.id ? "최신 재고 업로드만 취소할 수 있습니다." : null,
+    };
+  }
+  if (batch.kind === "SALES" || batch.kind === "PRODUCTION") {
+    const table = batch.kind === "SALES" ? db.shipmentHistory : db.productionHistory;
+    const [count, range] = await Promise.all([
+      (table as typeof db.shipmentHistory).count({ where: { batchId: batch.id } }),
+      (table as typeof db.shipmentHistory).aggregate({ where: { batchId: batch.id }, _min: { date: true }, _max: { date: true } }),
+    ]);
+    return {
+      batch,
+      kind: batch.kind as "SALES" | "PRODUCTION",
+      inserted: count,
+      skipped: Math.max(0, batch.rowCount - count),
+      period: range._min.date && range._max.date ? { from: range._min.date.toISOString().slice(0, 10), to: range._max.date.toISOString().slice(0, 10) } : null,
+      canCancel: !batch.revertedAt,
+      cancelBlockedReason: batch.revertedAt ? "이미 취소된 업로드입니다." : null,
+    };
+  }
+  return {
+    batch,
+    kind: batch.kind as "PRODUCT" | "CUSTOMER",
+    canCancel: false,
+    cancelBlockedReason: "제품·거래처 마스터는 기존 값을 덮어쓰므로 취소할 수 없습니다. 고친 파일을 다시 올리세요.",
+  };
+}
+
+export type CancelBatchResult = { ok: true; message: string } | { ok: false; message: string };
+
+/**
+ * 업로드 취소.
+ * - 재고: 최신 배치만 — revertLatestStock (직전 배치가 다시 기준)
+ * - 출고·생산실적: 이 배치로 새로 들어간 행만 지우고(중복으로 건너뛴 행은 원래 배치 소속이라 남는다) 월별 집계 재계산
+ */
+export async function cancelBatch(id: string, db: PrismaClient = prisma): Promise<CancelBatchResult> {
+  const batch = await db.uploadBatch.findUnique({ where: { id } });
+  if (!batch) return { ok: false, message: "업로드를 찾을 수 없습니다." };
+  if (batch.revertedAt) return { ok: false, message: "이미 취소된 업로드입니다." };
+  if (batch.kind === "STOCK") {
+    const r = await revertLatestStock(id, db);
+    if (!r.ok) return r;
+    return { ok: true, message: r.nowBasis ? `취소 완료. 현재 기준: ${r.nowBasis.fileName}` : "취소 완료. 현재 기준 재고 파일이 없습니다." };
+  }
+  if (batch.kind === "SALES" || batch.kind === "PRODUCTION") {
+    const deleted = await db.$transaction(
+      async (tx) => {
+        const t = tx as unknown as PrismaClient;
+        const r =
+          batch.kind === "SALES"
+            ? await t.shipmentHistory.deleteMany({ where: { batchId: id } })
+            : await t.productionHistory.deleteMany({ where: { batchId: id } });
+        await t.uploadBatch.update({ where: { id }, data: { revertedAt: new Date() } });
+        await rebuildMonthlyStat(t);
+        return r.count;
+      },
+      { timeout: 120_000, maxWait: 10_000 },
+    );
+    return { ok: true, message: `취소 완료. 이 업로드로 추가된 ${deleted.toLocaleString()}행을 지우고 월별 집계를 다시 계산했습니다.` };
+  }
+  return { ok: false, message: "제품·거래처 마스터는 취소할 수 없습니다." };
+}

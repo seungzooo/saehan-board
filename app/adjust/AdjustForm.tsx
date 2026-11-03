@@ -18,7 +18,7 @@ import {
 
 /**
  * 3터치 흐름: ① 품목 탭 → ② 수량 입력 → ③ 저장.
- * - 품목을 고르면 현재 가용재고를 불러와 "현재 30박스 → 출고 20 → 반영 후 10박스"를 보여준다.
+ * - 품목을 고르면 현재 재고를 불러와 "현재 30박스 → 출고 20 → 반영 후 10박스"를 보여준다.
  * - 사유는 기본 "출고". 출고일 때 미이행 수주가 있으면 "어느 수주 건인지" 선택 — 연결하면 그 수주 차감이 해제된다.
  * - 저장은 폼마다 발급한 요청 ID로 멱등 처리 (연타·동시 입력 시 한 건만 저장).
  * - 정정: 원기록은 그대로 두고 정정 기록(누가·언제·왜·얼마)을 추가한다.
@@ -165,7 +165,7 @@ export default function AdjustForm({
         return;
       }
       setRecent((list) => list.map((x) => (x.id === r.item.id || x.correctsId === r.item.id ? { ...x, cancelledAt: r.item.cancelledAt } : x)));
-      setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 가용재고 ${availableText(r.stock)}`, stock: r.stock });
+      setFlash({ kind: "ok", text: `취소됨 — ${item.productName} 현재 재고 ${availableText(r.stock)}`, stock: r.stock });
       if (product && product.code === item.productCode) {
         setStock(r.stock);
         await loadProductState(product.code);
@@ -201,7 +201,7 @@ export default function AdjustForm({
               <p className="truncate font-medium">{product.name}</p>
               <p className="truncate text-xs text-zinc-500">{productInfoText(product)}</p>
               <p className="mt-1 text-sm">
-                현재 가용재고{" "}
+                현재 재고{" "}
                 <span className="text-lg font-bold tabular-nums">{stock ? availableText(stock) : "…"}</span>
                 {stock?.available !== null && stock && <span className="text-zinc-500"> 박스</span>}
               </p>
@@ -343,7 +343,7 @@ export default function AdjustForm({
           <p className="font-medium">{flash.text}</p>
           {flash.stock && (
             <p className="mt-1">
-              가용재고 <span className="text-xl font-bold tabular-nums">{availableText(flash.stock)}</span>
+              현재 재고 <span className="text-xl font-bold tabular-nums">{availableText(flash.stock)}</span>
               {flash.stock.available !== null && " 박스"}
               {product && (
                 <>
@@ -375,7 +375,7 @@ export default function AdjustForm({
               const corrected = recent.some((x) => x.correctsId === it.id && !x.cancelledAt);
               return (
                 <li key={it.id} className={`flex items-center gap-2 px-3 py-2 ${cancelled ? "text-zinc-400" : ""}`}>
-                  <div className={`min-w-0 flex-1 ${cancelled ? "line-through" : ""}`}>
+                  <Link href={`/adjust/${it.id}`} className={`min-w-0 flex-1 rounded hover:bg-blue-50 ${cancelled ? "line-through" : ""}`}>
                     <p className="truncate font-medium">
                       {it.productName}
                       {isCorrection && <span className="ml-1 rounded bg-blue-100 px-1 text-xs text-blue-800">정정</span>}
@@ -388,7 +388,7 @@ export default function AdjustForm({
                       {it.correctionReason && ` · 사유: ${it.correctionReason}`}
                       {it.memo && ` · ${it.memo}`} · {formatShort(it.createdAt)} {it.createdBy}
                     </p>
-                  </div>
+                  </Link>
                   {cancelled ? (
                     <span className="shrink-0 text-xs">취소됨</span>
                   ) : (

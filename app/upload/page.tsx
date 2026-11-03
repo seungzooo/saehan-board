@@ -15,7 +15,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
   const initialKind = (Object.keys(UPLOAD_KIND_LABEL).includes(kind ?? "") ? kind : "STOCK") as UploadKind;
 
   const [batches, basis, stockBatches] = await Promise.all([
-    prisma.uploadBatch.findMany({ where: { revertedAt: null }, orderBy: { uploadedAt: "desc" }, take: 30 }),
+    prisma.uploadBatch.findMany({ orderBy: { uploadedAt: "desc" }, take: 30 }),
     getStockBasis(),
     prisma.uploadBatch.findMany({ where: { kind: "STOCK", revertedAt: null }, orderBy: { uploadedAt: "desc" }, take: 2 }),
   ]);
@@ -42,6 +42,8 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
       <RecentUploads
         items={batches.map((b) => ({
           id: b.id,
+          kindKey: b.kind,
+          reverted: !!b.revertedAt,
           kind: UPLOAD_KIND_LABEL[b.kind as UploadKind] ?? b.kind,
           fileName: b.fileName,
           rowCount: b.rowCount,

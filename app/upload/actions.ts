@@ -2,6 +2,8 @@
 
 import type { UploadKind } from "@/config/excel-mapping";
 import {
+  cancelBatch,
+  type CancelBatchResult,
   previewStock,
   processUpload,
   revertLatestStock,
@@ -68,6 +70,17 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
 export async function revertStockAction(batchId: string): Promise<RevertResult> {
   const r = await revertLatestStock(batchId);
   if (r.ok) revalidateAll();
+  return r;
+}
+
+/** 업로드 상세의 "이 업로드 취소" */
+export async function cancelBatchAction(batchId: string): Promise<CancelBatchResult> {
+  const r = await cancelBatch(batchId);
+  if (r.ok) {
+    revalidateAll();
+    revalidatePath(`/upload/${batchId}`);
+    revalidatePath("/analytics");
+  }
   return r;
 }
 

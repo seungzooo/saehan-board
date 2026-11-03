@@ -312,7 +312,7 @@ function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved
   const time = formatDateTime(r.uploadedAt).slice(11);
   switch (kind) {
     case "STOCK":
-      return `재고 ${n(x.inserted)}개 품목 갱신${x.carried ? ` + 이월 ${n(x.carried)}` : ""}, 반영 시각 ${time}`;
+      return `${n(x.inserted)}개 품목 갱신됨${x.carried ? ` (+ 이월 ${n(x.carried)})` : ""} · 반영 ${time}`;
     case "SALES":
     case "PRODUCTION":
       return `${kind === "SALES" ? "출고" : "생산"}실적 ${n(x.inserted)}행 추가${x.duplicates ? `, 이미 있던 ${n(x.duplicates)}행 건너뜀` : ""}${
@@ -325,23 +325,25 @@ function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved
   }
 }
 
-function NextAction({ kind }: { kind: UploadKind }) {
-  const btn = "inline-flex h-11 items-center rounded-md px-4 text-sm font-semibold";
-  if (kind === "STOCK" || kind === "PRODUCT") {
-    return (
-      <Link href="/stock" className={`${btn} bg-zinc-900 text-white`}>
-        재고 확인하기 →
+function NextAction({ kind, batchId }: { kind: UploadKind; batchId: string }) {
+  const btn = "inline-flex h-12 items-center rounded-lg px-4 text-base font-semibold";
+  return (
+    <div className="flex flex-wrap gap-2">
+      {(kind === "STOCK" || kind === "PRODUCT") && (
+        <Link href="/" className={`${btn} bg-blue-600 text-white`}>
+          재고 보기 →
+        </Link>
+      )}
+      {(kind === "SALES" || kind === "PRODUCTION") && (
+        <Link href="/analytics" className={`${btn} bg-blue-600 text-white`}>
+          추이 보기 →
+        </Link>
+      )}
+      <Link href={`/upload/${batchId}`} className={`${btn} border border-zinc-300 text-zinc-800 hover:bg-blue-50`}>
+        업로드 상세
       </Link>
-    );
-  }
-  if (kind === "SALES" || kind === "PRODUCTION") {
-    return (
-      <button type="button" disabled className={`${btn} cursor-not-allowed bg-zinc-200 text-zinc-500`} title="F5 추이 분석 구현 후 열립니다">
-        추이 보기 → (준비 중)
-      </button>
-    );
-  }
-  return null;
+    </div>
+  );
 }
 
 /** 오류 행을 종류별로 집계 — 품번 불일치 / 수량 누락·오류 / 기타 */
@@ -422,7 +424,7 @@ function ResultCard({
         ))}
         <ErrorDetails errors={x.errors} title={`문제 행 ${x.errors.length.toLocaleString()}건 펼쳐보기 (해당 품목은 "재고 확인 필요")`} />
         <div className="mt-3">
-          <NextAction kind={kind} />
+          <NextAction kind={kind} batchId={r.batchId} />
         </div>
       </div>
     );

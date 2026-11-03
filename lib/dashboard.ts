@@ -28,6 +28,7 @@ export async function getDashboard() {
     lastAdjustmentAt: lastAdjustment?.createdAt ?? null,
     recentUploads,
     lowStockCount: low.length,
+    lowRows: low,
     lowBasisTo: low[0]?.days.basisTo ?? null,
   };
 }

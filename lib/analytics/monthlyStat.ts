@@ -7,6 +7,7 @@ import type { PrismaClient } from "@/lib/generated/prisma/client";
 
 type Stat = {
   qtyProduced: number;
+  qtyProducedBox: number;
   qtyProdDefect: number;
   qtyShippedBox: number;
   qtyShippedB2B: number;
@@ -19,7 +20,7 @@ export async function rebuildMonthlyStat(db: PrismaClient): Promise<number> {
     const k = `${productCode}\u0000${yearMonth}`;
     let s = stats.get(k);
     if (!s) {
-      s = { qtyProduced: 0, qtyProdDefect: 0, qtyShippedBox: 0, qtyShippedB2B: 0, qtyShippedB2C: 0 };
+      s = { qtyProduced: 0, qtyProducedBox: 0, qtyProdDefect: 0, qtyShippedBox: 0, qtyShippedB2B: 0, qtyShippedB2C: 0 };
       stats.set(k, s);
     }
     return s;
@@ -27,11 +28,16 @@ export async function rebuildMonthlyStat(db: PrismaClient): Promise<number> {
 
   const prod = await db.productionHistory.findMany({
     where: { slipType: { in: [...PRODUCTION_SLIP_TYPES] } },
-    select: { productCode: true, yearMonth: true, qtyGood: true, qtyDefect: true },
+    select: { productCode: true, yearMonth: true, qtyGood: true, qtyDefect: true, unitsPerBox: true },
   });
+  const upbOf = new Map(
+    (await db.product.findMany({ select: { code: true, unitsPerBox: true } })).map((p) => [p.code, p.unitsPerBox]),
+  );
   for (const p of prod) {
     const s = get(p.productCode, p.yearMonth);
     s.qtyProduced += p.qtyGood;
+    const upb = p.unitsPerBox ?? upbOf.get(p.productCode) ?? 1;
+    s.qtyProducedBox += upb > 0 ? p.qtyGood / upb : p.qtyGood;
     s.qtyProdDefect += p.qtyDefect;
   }
 

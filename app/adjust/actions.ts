@@ -42,7 +42,7 @@ export async function listOpenOrdersAction(productCode: string): Promise<OpenOrd
   return listOpenOrders(productCode);
 }
 
-/** 품목의 현재 가용재고 — 변동 입력 화면의 "현재 N → 반영 후 M" 표시용 */
+/** 품목의 현재 재고 — 변동 입력 화면의 "현재 N → 반영 후 M" 표시용 */
 export async function getStockAction(productCode: string): Promise<AvailableStock | null> {
   return (await computeForProducts([productCode])).get(productCode) ?? null;
 }

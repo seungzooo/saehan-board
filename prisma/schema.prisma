@@ -180,7 +180,8 @@ model MonthlyStat {
   id            Int    @id @default(autoincrement())
   productCode   String
   yearMonth     String // YYYY-MM
-  qtyProduced   Int    @default(0) // A급, 전표구분 21+22
+  qtyProduced   Int    @default(0) // A급 낱개, 전표구분 21+22 (32 재가공투입 제외)
+  qtyProducedBox Float @default(0) // A급 박스 환산 (행의 포장단위수량, 없으면 제품 입수) — 출고와 같은 축
   qtyProdDefect Int    @default(0) // C급, 전표구분 21+22
   qtyShippedBox Float  @default(0) // 정상·내수만, 박스
   qtyShippedB2B Float  @default(0)

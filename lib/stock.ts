@@ -203,3 +203,44 @@ export async function listLowStock(): Promise<StockRow[]> {
   const rows = await toRows(products);
   return rows.filter((r) => isLowStock(r.days)).sort((a, b) => (a.days.days ?? 0) - (b.days.days ?? 0));
 }
+
+/** 최근 30일 일별 출고(박스, 정상·내수). 끝 = 출고실적 마지막 날짜. 스파크라인용 */
+export async function getDailyShipments(code: string): Promise<{ basisTo: string | null; days: { date: string; qtyBox: number }[] }> {
+  const last = await prisma.shipmentHistory.aggregate({ _max: { date: true } });
+  const to = last._max.date;
+  if (!to) return { basisTo: null, days: [] };
+  const from = new Date(to.getTime() - (SHIPMENT_WINDOW_DAYS - 1) * 86400_000);
+  const rows = await prisma.shipmentHistory.groupBy({
+    by: ["date"],
+    where: { productCode: code, date: { gte: from, lte: to }, shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE },
+    _sum: { qtyBox: true },
+  });
+  const byDay = new Map(rows.map((r) => [r.date.toISOString().slice(0, 10), r._sum.qtyBox ?? 0]));
+  const days: { date: string; qtyBox: number }[] = [];
+  for (let i = 0; i < SHIPMENT_WINDOW_DAYS; i++) {
+    const d = new Date(from.getTime() + i * 86400_000).toISOString().slice(0, 10);
+    days.push({ date: d, qtyBox: Math.round((byDay.get(d) ?? 0) * 10) / 10 });
+  }
+  return { basisTo: to.toISOString().slice(0, 10), days };
+}
+
+export type ListFilter = "all" | "checked" | "unchecked";
+export const LIST_PAGE_SIZE = 50;
+
+/** 대시보드 숫자 → 목록: 전체 / 확인됨(최근 재고 파일에 있음) / 미확인. 이름순, 50개씩 */
+export async function listByFilter(filter: ListFilter, page: number): Promise<{ rows: StockRow[]; total: number }> {
+  const batch = await getLatestStockBatch();
+  const where =
+    filter === "checked"
+      ? batch
+        ? { isActive: true, snapshots: { some: { batchId: batch.id } } }
+        : { isActive: true, code: { in: [] as string[] } }
+      : filter === "unchecked" && batch
+        ? { isActive: true, snapshots: { none: { batchId: batch.id } } }
+        : { isActive: true };
+  const [products, total] = await Promise.all([
+    prisma.product.findMany({ where, orderBy: { name: "asc" }, skip: (page - 1) * LIST_PAGE_SIZE, take: LIST_PAGE_SIZE, select: PRODUCT_LITE }),
+    prisma.product.count({ where }),
+  ]);
+  return { rows: await toRows(products), total };
+}
