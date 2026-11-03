@@ -21,6 +21,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pb-8">
       <StockSearchBox initialQuery={q} includeDormant={includeDormant} />
+      <Link href="/stock/customers" data-testid="customer-entry" className="-mt-1 self-end text-sm text-blue-600">
+        거래처로 찾기 →
+      </Link>
       {query ? (
         <>
           <BasisLine basis={basis} />
@@ -179,7 +182,7 @@ async function Dashboard({ basis: stockBasis }: { basis: Awaited<ReturnType<type
           {s.checked > 0 && <div className="h-full bg-blue-600" style={{ width: `${100 - uncheckedPct}%` }} />}
           {s.unchecked > 0 && <div className="h-full bg-zinc-300" style={{ width: `${uncheckedPct}%` }} />}
         </div>
-        <p className="mt-1 text-xs text-zinc-500">관리 대상 중 최근 재고 파일에 없는 품목 — 최근 출고량 많은 순으로 보기 →</p>
+        <p className="mt-1 text-xs text-zinc-500">관리 대상 중 최근 재고 파일에 없는 품목 — 최근 3개 달 출고 건수 많은 순으로 보기 →</p>
       </Link>
 
       {/* 곧 소진 표 */}

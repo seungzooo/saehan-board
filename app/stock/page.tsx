@@ -13,7 +13,7 @@ import { Suspense } from "react";
 export const dynamic = "force-dynamic";
 
 const VIEWS: Record<ListView, { title: string; sort: string; toggle: boolean }> = {
-  all: { title: "관리 대상 전체", sort: "확인된 품목(소진일수 짧은 순) → 확인 필요(최근 출고 건수 많은 순)", toggle: true },
+  all: { title: "관리 대상 전체", sort: `확인된 품목(소진일수 짧은 순) → 확인 필요(최근 ${RECENT_QTY_MONTHS}개 달 출고 건수 많은 순)`, toggle: true },
   checked: { title: "확인 — 이번 기준재고에 있는 품목", sort: "소진일수 짧은 순, 산정 불가는 마지막", toggle: true },
   unchecked: { title: "미확인 — 최근 재고 파일에 없음", sort: `최근 ${RECENT_QTY_MONTHS}개 달 출고 건수 많은 순 → 최근 출고일 → 품번`, toggle: true },
   low: { title: `곧 소진 — 소진 ${LOW_DAYS_THRESHOLD}일 이하`, sort: "소진일수 짧은 순", toggle: true },
@@ -67,6 +67,9 @@ export default async function StockListPage({ searchParams }: { searchParams: Pr
         <BasisLine basis={stockBasis} />
       </header>
 
+      <Link href="/stock/customers" className="self-start text-sm text-blue-600">
+        거래처로 찾기 →
+      </Link>
       <nav className="flex flex-wrap gap-1 text-sm" aria-label="목록 종류">
         {(["all", "checked", "unchecked", "low", "dormant", "dormantStock"] as const).map((v) => (
           <PendingLink

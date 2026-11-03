@@ -313,7 +313,7 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
       {/* 시차 상관 */}
       <section>
         <ChartHead title={`생산 → 판매 시차 상관 (k = 0~${MAX_LAG})`} unit="상관계수 r (−1~1)" basis={`분석 기간 ${lagRange} · 연도 버튼과 무관`} />
-        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k 의 상관 — k개월 뒤 판매가 생산을 따라가는지</p>
+        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k 의 상관 — 월별 합계가 함께 움직이는 정도 (개별 로트의 출고 시점은 아님)</p>
         <LagChart rows={a.lags} best={a.best?.lag ?? null} />
         <LagTable rows={a.lags} best={a.best?.lag ?? null} />
         <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(a.best)}</p>

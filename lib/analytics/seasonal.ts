@@ -124,11 +124,11 @@ export function describeNow(index: number | null, month: number, days: number | 
   return `지금은 평균 수준(${month}월 지수 ${idx})${d}`;
 }
 
-/** "생산 후 1개월 뒤 출고 경향 (r=0.62)" */
+/** "1개월 차이 생산량과 출고량이 가장 비슷하게 움직임 (r=0.62, 상관 보통)" */
 export function describeLag(best: LagRow | null): string {
   if (!best || best.r === null) return "생산·출고 상관을 산정할 수 없습니다 (변동이 없거나 기간이 짧음).";
   const strength = best.r >= 0.7 ? "강함" : best.r >= 0.4 ? "보통" : best.r >= 0.2 ? "약함" : "거의 없음";
-  const when = best.lag === 0 ? "생산한 달에 바로 출고되는 경향" : `생산 후 ${best.lag}개월 뒤 출고 경향`;
+  const when = best.lag === 0 ? "동월 생산량과 출고량이 가장 비슷하게 움직임" : `${best.lag}개월 차이 생산량과 출고량이 가장 비슷하게 움직임`;
   return `${when} (r=${best.r.toFixed(2)}, 상관 ${strength})`;
 }
 
@@ -241,12 +241,13 @@ export function yearlySeasonal(months: string[], values: (number | null)[]): Yea
     });
 }
 
-/** "생산월 t → 출고월 t+2 상관이 가장 높음 (r=0.71, 유효 57쌍)" */
+/** "2개월 차이 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님 — …" */
 export function describeLagCalendar(best: LagRow | null): string {
   if (!best || best.r === null) return "생산·출고 상관을 산정할 수 없습니다 (유효 월 쌍이 3개 미만이거나 변동이 없음).";
   const strength = best.r >= 0.7 ? "강함" : best.r >= 0.4 ? "보통" : best.r >= 0.2 ? "약함" : "거의 없음";
-  const when = best.lag === 0 ? "생산한 달에 바로 출고되는 경향" : `생산 후 ${best.lag}개월 뒤 출고 경향`;
-  return `${when} — 생산월 t ↔ 출고월 t+${best.lag} (r=${best.r.toFixed(2)}, 상관 ${strength}, 유효 ${best.n}쌍)`;
+  // 상관은 월별 합계가 함께 움직이는 정도일 뿐, 생산한 물건이 그 시점에 출고된다는 뜻이 아니다
+  const when = best.lag === 0 ? "동월" : `${best.lag}개월 차이`;
+  return `${when} 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님 — 생산월 t ↔ 출고월 t+${best.lag} (r=${best.r.toFixed(2)}, 상관 ${strength}, 유효 ${best.n}쌍)`;
 }
 
 /** 연도별 지수 한 줄: 해마다 반복되는 성수기 달이 있는지 */

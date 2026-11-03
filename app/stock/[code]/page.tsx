@@ -4,6 +4,8 @@ import { ChartHead, Sparkline } from "@/components/charts";
 import { getProductActivity } from "@/lib/activity";
 import { getDailyShipments, getProductDetail } from "@/lib/stock";
 import { availableText, BasisLine, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
+import RequestCalculator from "@/components/RequestCalculator";
+import { qtyText, stockUnits } from "@/lib/request";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -15,9 +17,9 @@ export default async function ProductDetailPage({
   searchParams,
 }: {
   params: Promise<{ code: string }>;
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; customer?: string }>;
 }) {
-  const [{ code }, { q }] = await Promise.all([params, searchParams]);
+  const [{ code }, { q, customer }] = await Promise.all([params, searchParams]);
   const productCode = decodeURIComponent(code);
   const [detail, daily, act] = await Promise.all([getProductDetail(productCode), getDailyShipments(productCode), getProductActivity(productCode)]);
   if (!detail) notFound();
@@ -30,9 +32,15 @@ export default async function ProductDetailPage({
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-4">
-      <Link href={q ? `/?q=${encodeURIComponent(q)}` : "/"} className="text-sm text-blue-600">
-        ← 재고 검색
-      </Link>
+      {customer ? (
+        <Link href={`/stock/customers/${encodeURIComponent(customer)}`} className="text-sm text-blue-600">
+          ← 거래처 품목
+        </Link>
+      ) : (
+        <Link href={q ? `/?q=${encodeURIComponent(q)}` : "/"} className="text-sm text-blue-600">
+          ← 재고 검색
+        </Link>
+      )}
 
       {/* 품명 */}
       <header className="min-w-0">
@@ -61,6 +69,11 @@ export default async function ProductDetailPage({
           {availableText(stock)}
           {!needsCheck && <span className="ml-1 text-xl font-normal text-zinc-500">박스</span>}
         </p>
+        {!needsCheck && (
+          <p data-testid="available-units" className="num text-sm text-zinc-600">
+            = {qtyText(stockUnits({ available: stock.available, unitsPerBox: product.unitsPerBox })!, product)}
+          </p>
+        )}
         {st.key === "STALE" && (
           <p data-testid="stale-note" className="mt-1 text-sm font-medium text-amber-800">
             오늘 자료 미반영 — 마지막으로 확인된 수량과 시각입니다. 출고 가능 여부는 새 재고 파일이 반영된 뒤 판단하세요.
@@ -95,6 +108,19 @@ export default async function ProductDetailPage({
           </>
         )}
       </section>
+
+      {/* 요청 수량 계산 — 목록·복사 문구와 같은 산식(lib/request.ts) */}
+      <RequestCalculator
+        stock={{
+          code: product.code,
+          name: product.name,
+          packUnit: product.packUnit,
+          unitsPerBox: product.unitsPerBox,
+          available: stock.available,
+          basisAt: (stock.stockAsOf ?? stock.uploadedAt)?.toISOString() ?? null,
+          stale: st.key === "STALE",
+        }}
+      />
 
       {/* 계산 근거 */}
       <section>

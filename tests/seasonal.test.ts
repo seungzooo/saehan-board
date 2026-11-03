@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeLagCalendar,
   bestLag,
   describeLag,
   describeNow,
@@ -78,8 +79,12 @@ describe("해석 문장", () => {
   });
 
   it("describeLag / describeTrend", () => {
-    expect(describeLag({ lag: 1, r: 0.62, n: 59 })).toBe("생산 후 1개월 뒤 출고 경향 (r=0.62, 상관 보통)");
-    expect(describeLag({ lag: 0, r: 0.81, n: 60 })).toBe("생산한 달에 바로 출고되는 경향 (r=0.81, 상관 강함)");
+    expect(describeLag({ lag: 1, r: 0.62, n: 59 })).toBe("1개월 차이 생산량과 출고량이 가장 비슷하게 움직임 (r=0.62, 상관 보통)");
+    expect(describeLag({ lag: 0, r: 0.81, n: 60 })).toBe("동월 생산량과 출고량이 가장 비슷하게 움직임 (r=0.81, 상관 강함)");
+    expect(describeLagCalendar({ lag: 0, r: 0.8, n: 60 })).toBe(
+      "동월 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님 — 생산월 t ↔ 출고월 t+0 (r=0.80, 상관 강함, 유효 60쌍)",
+    );
+    expect(describeLagCalendar({ lag: 2, r: 0.5, n: 58 })).toContain("2개월 차이 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님");
     expect(describeLag(null)).toMatch(/산정할 수 없습니다/);
     const s = [...new Array(12).fill(100), ...new Array(12).fill(130)];
     expect(describeTrend(s)).toBe("최근 12개월 출고가 직전 12개월보다 30% 많음");
