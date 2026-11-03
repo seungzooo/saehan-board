@@ -7,7 +7,8 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 60_000,
+  timeout: 90_000,
+  expect: { timeout: 15_000 }, // dev 서버는 분석 전체 기간 렌더에 6초 이상 걸린다
   retries: 0,
   reporter: "list",
   use: {

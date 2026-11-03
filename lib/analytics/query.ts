@@ -10,6 +10,7 @@
  */
 import { prisma } from "@/lib/db";
 import type { AvailableStock } from "@/lib/availableStock";
+import { getMonthlyUnits } from "./shipments";
 import { computeForProducts, daysOfStock, getShipmentRates, type DaysOfStock } from "@/lib/stock";
 import {
   bestLag,
@@ -41,6 +42,7 @@ export const SEGMENT_LABEL: Record<Segment, string> = { ALL: "전체", B2B: "B2B
 type StatRow = {
   productCode: string;
   yearMonth: string;
+  qtyProduced: number;
   qtyProducedBox: number;
   qtyNormalBox: number;
   qtyNormalB2B: number;
@@ -50,6 +52,7 @@ type StatRow = {
 const STAT_SELECT = {
   productCode: true,
   yearMonth: true,
+  qtyProduced: true,
   qtyProducedBox: true,
   qtyNormalBox: true,
   qtyNormalB2B: true,
@@ -126,15 +129,17 @@ export type ProductAnalysis =
       product: ProductLite;
       stock: AvailableStock;
       days: DaysOfStock;
+      /** 최근 24개월 생산·정상 판매·반품, 모두 낱개 (화면에서 박스 환산 여부 결정) */
       trend: { yearMonth: string; production: number; shipment: number; returns: number }[];
-      returnsTotal: number;
-      normalTotal: number;
+      returnsTotal: number; // 낱개
+      normalTotal: number; // 낱개
       seasonal: SeasonalRow[];
       yearly: YearRow[];
       lags: LagRow[];
       best: LagRow | null;
       currentMonth: number;
       seasonRange: { from: string; to: string } | null;
+      lagRange: { from: string; to: string } | null;
     }
   | { ok: false; reason: "NOT_FOUND" | "NO_PRODUCTION" | "NO_SHIPMENT"; product?: ProductLite };
 
@@ -144,23 +149,28 @@ export async function getProductAnalysis(code: string, seg: Segment, now = new D
     select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
   });
   if (!product) return { ok: false, reason: "NOT_FOUND" };
-  const [rows, basis] = await Promise.all([prisma.monthlyStat.findMany({ where: { productCode: code }, select: STAT_SELECT }), getAnalysisBasis()]);
+  const [rows, basis, units] = await Promise.all([
+    prisma.monthlyStat.findMany({ where: { productCode: code }, select: STAT_SELECT }),
+    getAnalysisBasis(),
+    getMonthlyUnits(code),
+  ]);
   if (rows.reduce((s, r) => s + r.qtyProducedBox, 0) <= 0) return { ok: false, reason: "NO_PRODUCTION", product };
   if (rows.reduce((s, r) => s + r.qtyNormalBox, 0) <= 0) return { ok: false, reason: "NO_SHIPMENT", product };
 
+  // 계절지수·시차 상관은 비율·상관이라 단위와 무관 — MonthlyStat 박스 환산값을 그대로 쓴다
   const prodMap = series(rows, (r) => r.qtyProducedBox);
   const shipMap = series(rows, (r) => shipOf(r, seg));
-  const retMap = series(rows, (r) => r.qtyReturnBox);
+  // 추이 그래프·합계는 낱개 (생산 A급 수량, 정상·반품 출고수량)
+  const prodUnits = series(rows, (r) => r.qtyProduced);
 
   // 추이: 출고 자료 마지막 달까지 24개월
   const lastYm = basis.salesCoverage?.to ?? rows.map((r) => r.yearMonth).sort().at(-1)!;
   const trendMonths = monthRange(shiftMonth(lastYm, -(TREND_MONTHS - 1)), lastYm);
-  const r1 = (v: number) => Math.round(v * 10) / 10;
   const trend = trendMonths.map((ym) => ({
     yearMonth: ym,
-    production: r1(prodMap.get(ym) ?? 0),
-    shipment: r1(shipMap.get(ym) ?? 0),
-    returns: r1(retMap.get(ym) ?? 0),
+    production: prodUnits.get(ym) ?? 0,
+    shipment: units.normal.get(ym) ?? 0,
+    returns: units.returns.get(ym) ?? 0,
   }));
 
   // 5년 평균 계절지수 (자료 범위로 자름) + 연도별 지수
@@ -186,14 +196,15 @@ export async function getProductAnalysis(code: string, seg: Segment, now = new D
     stock,
     days: daysOfStock(stock, rates.get(code) ?? null, rates.basisTo),
     trend,
-    returnsTotal: r1(trend.reduce((s, t) => s + t.returns, 0)),
-    normalTotal: r1(trend.reduce((s, t) => s + t.shipment, 0)),
+    returnsTotal: trend.reduce((s, t) => s + t.returns, 0),
+    normalTotal: trend.reduce((s, t) => s + t.shipment, 0),
     seasonal,
     yearly,
     lags,
     best: bestLag(lags),
     currentMonth: seoulMonth,
     seasonRange: sm.length ? { from: sm[0], to: sm[sm.length - 1] } : null,
+    lagRange: um.length ? { from: um[0], to: um[um.length - 1] } : null,
   };
 }
 
@@ -209,27 +220,24 @@ export async function getOverview(seg: Segment) {
   ]);
   const sm = seasonMonths(basis.salesCoverage);
 
-  const totalShip = new Map<string, number>();
-  const totalProd = new Map<string, number>();
-  const totalRet = new Map<string, number>();
+  // 시차 상관 = 생산·판매를 함께 비교 → 교집합 품번만 합산
+  const interShip = new Map<string, number>();
+  const interProd = new Map<string, number>();
+  // 계절지수 상위 10 = 판매만 보는 분석 → 전 품목
   const byProduct = new Map<string, Map<string, number>>();
   for (const r of rows) {
-    if (!codes.has(r.productCode)) continue;
     const v = shipOf(r, seg);
-    totalShip.set(r.yearMonth, (totalShip.get(r.yearMonth) ?? 0) + v);
-    totalProd.set(r.yearMonth, (totalProd.get(r.yearMonth) ?? 0) + r.qtyProducedBox);
-    totalRet.set(r.yearMonth, (totalRet.get(r.yearMonth) ?? 0) + r.qtyReturnBox);
     let m = byProduct.get(r.productCode);
     if (!m) byProduct.set(r.productCode, (m = new Map()));
     m.set(r.yearMonth, v);
+    if (!codes.has(r.productCode)) continue;
+    interShip.set(r.yearMonth, (interShip.get(r.yearMonth) ?? 0) + v);
+    interProd.set(r.yearMonth, (interProd.get(r.yearMonth) ?? 0) + r.qtyProducedBox);
   }
-  const totalSeries = sm.map((ym) => ({ yearMonth: ym, shipment: Math.round(totalShip.get(ym) ?? 0), returns: Math.round(totalRet.get(ym) ?? 0) }));
-  const totalSeasonal = seasonalIndex(sm, totalSeries.map((t) => t.shipment));
-  const totalYearly = yearlySeasonal(sm, coveredSeries(sm, totalShip, basis.salesCoverage));
   const um = unionMonths(basis.productionCoverage, basis.salesCoverage);
   const totalLags = lagCorrelationsCalendar(
-    coveredSeries(um, totalProd, basis.productionCoverage),
-    coveredSeries(um, totalShip, basis.salesCoverage),
+    coveredSeries(um, interProd, basis.productionCoverage),
+    coveredSeries(um, interShip, basis.salesCoverage),
     MAX_LAG,
   );
 
@@ -258,13 +266,9 @@ export async function getOverview(seg: Segment) {
     basis,
     intersection: codes.size,
     eligible: candidates.length,
-    totalSeries,
-    totalSeasonal,
-    totalYearly,
+    lagRange: um.length ? { from: um[0], to: um[um.length - 1] } : null,
     totalLags,
     totalBest: bestLag(totalLags),
-    returnsTotal: totalSeries.reduce((s, t) => s + t.returns, 0),
-    normalTotal: totalSeries.reduce((s, t) => s + t.shipment, 0),
     top: topRows,
     seasonRange: sm.length ? { from: sm[0], to: sm[sm.length - 1] } : null,
   };

@@ -20,6 +20,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatUnits } from "@/lib/analytics/periods";
 
 export const COLOR_PRODUCTION = "#2563eb";
 export const COLOR_SHIPMENT = "#ea580c";
@@ -64,19 +65,33 @@ export function Sparkline({ data }: { data: { date: string; qtyBox: number }[] }
   );
 }
 
-/** 월별 생산·출고 (선 2개, 한 축 = 박스) */
-export function TrendChart({ data }: { data: { yearMonth: string; production: number; shipment: number }[] }) {
+/** 월별 생산·판매 (선 2개, 한 축). 입력은 낱개, boxSize가 있으면 박스로 그린다. 툴팁 = "2박스 50개" */
+export function TrendChart({
+  data,
+  boxSize,
+}: {
+  data: { yearMonth: string; production: number; shipment: number }[];
+  boxSize: number | null;
+}) {
+  const d = data.map((p) => ({ ...p, pv: boxSize ? p.production / boxSize : p.production, sv: boxSize ? p.shipment / boxSize : p.shipment }));
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+        <LineChart data={d} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="yearMonth" tick={{ fontSize: 11, fill: AXIS }} tickFormatter={(v: string) => v.slice(2)} interval="preserveStartEnd" minTickGap={16} />
-          <YAxis tick={{ fontSize: 11, fill: AXIS }} width={48} tickFormatter={(v: number) => nf(v)} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v, name) => [`${nf(Number(v))} 박스`, name === "production" ? "생산" : "판매(정상)"]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v) => (v === "production" ? "생산 (본가공+재가공입고)" : "판매 (정상 출고)")} />
-          <Line type="monotone" dataKey="production" stroke={COLOR_PRODUCTION} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
-          <Line type="monotone" dataKey="shipment" stroke={COLOR_SHIPMENT} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          <YAxis tick={{ fontSize: 11, fill: AXIS }} width={52} tickFormatter={(v: number) => nf(v)} />
+          <Tooltip
+            contentStyle={tooltipStyle}
+            formatter={(_v, name, item) => {
+              const p = (item as { payload?: { production: number; shipment: number } }).payload;
+              const units = name === "pv" ? (p?.production ?? 0) : (p?.shipment ?? 0);
+              return [formatUnits(units, boxSize), name === "pv" ? "생산" : "판매(정상)"];
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v) => (v === "pv" ? "생산 (본가공+재가공입고)" : "판매 (정상 출고)")} />
+          <Line type="monotone" dataKey="pv" stroke={COLOR_PRODUCTION} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          <Line type="monotone" dataKey="sv" stroke={COLOR_SHIPMENT} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -157,33 +172,113 @@ export function LagChart({ rows, best }: { rows: { lag: number; r: number | null
   );
 }
 
-/** 월별 반품 (정상 판매와 따로) — 단일 계열, 회색 */
-export function ReturnsChart({ data }: { data: { yearMonth: string; returns: number }[] }) {
+/** 월별 반품 (정상 판매와 따로) — 단일 계열, 회색. 입력은 낱개 */
+export function ReturnsChart({ data, boxSize }: { data: { yearMonth: string; returns: number }[]; boxSize: number | null }) {
+  const d = data.map((p) => ({ ...p, v: boxSize ? p.returns / boxSize : p.returns }));
   return (
     <div className="h-24 w-full" aria-label="월별 반품 막대그래프">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap={2}>
+        <BarChart data={d} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap={2}>
           <XAxis dataKey="yearMonth" tick={{ fontSize: 10, fill: AXIS }} tickFormatter={(v: string) => v.slice(2)} interval="preserveStartEnd" minTickGap={24} />
-          <YAxis tick={{ fontSize: 10, fill: AXIS }} width={40} tickFormatter={(v: number) => nf(v)} />
-          <Tooltip cursor={{ fill: "#f4f4f5" }} contentStyle={tooltipStyle} formatter={(v) => [`${nf(Number(v))} 박스`, "반품"]} />
-          <Bar dataKey="returns" fill="#71717a" radius={[2, 2, 0, 0]} isAnimationActive={false} />
+          <YAxis tick={{ fontSize: 10, fill: AXIS }} width={48} tickFormatter={(v: number) => nf(v)} />
+          <Tooltip
+            cursor={{ fill: "#f4f4f5" }}
+            contentStyle={tooltipStyle}
+            formatter={(_v, _n, item) => [formatUnits((item as { payload?: { returns: number } }).payload?.returns ?? 0, boxSize), "반품"]}
+          />
+          <Bar dataKey="v" fill="#71717a" radius={[2, 2, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-/** 전체 5년 월별 출고 (선 1개) */
-export function TotalChart({ data }: { data: { yearMonth: string; shipment: number }[] }) {
+/** 월별 출고량 한 점 (낱개). units null = 자료 없음·집계 중 → 선을 끊는다 */
+export type MonthPointView = { month: number; ym: string; units: number | null; status: "ok" | "missing" | "incomplete" | "nodata" };
+
+const STATUS_TEXT = { missing: "자료 누락", incomplete: "집계 중", nodata: "자료 없음", ok: "" } as const;
+
+function MonthTooltip({
+  active,
+  payload,
+  boxSize,
+}: {
+  active?: boolean;
+  payload?: { payload: MonthPointView }[];
+  boxSize: number | null;
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  const [y, m] = p.ym.split("-");
   return (
-    <div className="h-56 w-full">
+    <div style={tooltipStyle} className="bg-white px-2 py-1" data-testid="month-tooltip">
+      <p className="font-semibold">
+        {y}년 {Number(m)}월
+      </p>
+      <p className="num">{p.units === null ? STATUS_TEXT[p.status] : `정상 출고 ${formatUnits(p.units, boxSize)}`}</p>
+    </div>
+  );
+}
+
+/** 선택 연도 월별 출고량 — 가로축 1~12월 고정, 자료 없는 달은 선을 끊는다, 완료된 0은 0 */
+export function YearMonthChart({ points, boxSize, unit }: { points: MonthPointView[]; boxSize: number | null; unit: string }) {
+  const data = points.map((p) => ({ ...p, label: `${p.month}월`, v: p.units === null ? null : boxSize ? p.units / boxSize : p.units }));
+  return (
+    <div className="h-60 w-full" data-testid="year-month-chart">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
-          <XAxis dataKey="yearMonth" tick={{ fontSize: 11, fill: AXIS }} tickFormatter={(v: string) => v.slice(2)} interval="preserveStartEnd" minTickGap={24} />
-          <YAxis tick={{ fontSize: 11, fill: AXIS }} width={56} tickFormatter={(v: number) => nf(v)} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${nf(Number(v))} 박스`, "출고"]} />
-          <Line type="monotone" dataKey="shipment" stroke={COLOR_SHIPMENT} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          <XAxis dataKey="label" interval={0} tick={{ fontSize: 10, fill: AXIS }} tickMargin={4} />
+          <YAxis
+            tick={{ fontSize: 10, fill: AXIS }}
+            width={56}
+            tickFormatter={(v: number) => (v >= 1_000_000 ? `${nf(v / 1_000_000)}백만` : v >= 10_000 ? `${nf(v / 10_000)}만` : nf(v))}
+            label={{ value: unit, position: "insideTopLeft", offset: 0, dy: -6, fontSize: 10, fill: AXIS }}
+          />
+          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={{ stroke: "#a1a1aa" }} />
+          <Line
+            type="linear"
+            dataKey="v"
+            stroke={COLOR_SHIPMENT}
+            strokeWidth={2}
+            connectNulls={false}
+            dot={{ r: 3, fill: COLOR_SHIPMENT }}
+            activeDot={{ r: 6 }}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** 전체 기간 월별 출고량 — 해가 바뀌는 1월마다 세로 구분선과 연도 라벨 */
+export function AllPeriodChart({ points, boxSize, unit }: { points: MonthPointView[]; boxSize: number | null; unit: string }) {
+  const data = points.map((p) => ({ ...p, v: p.units === null ? null : boxSize ? p.units / boxSize : p.units }));
+  const yearStarts = points.filter((p) => p.month === 1).map((p) => p.ym);
+  return (
+    <div className="h-60 w-full" data-testid="all-period-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 18, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke={GRID} vertical={false} />
+          <XAxis dataKey="ym" tick={false} height={8} />
+          <YAxis
+            tick={{ fontSize: 10, fill: AXIS }}
+            width={56}
+            tickFormatter={(v: number) => (v >= 1_000_000 ? `${nf(v / 1_000_000)}백만` : v >= 10_000 ? `${nf(v / 10_000)}만` : nf(v))}
+            label={{ value: unit, position: "insideTopLeft", offset: 0, dy: -16, fontSize: 10, fill: AXIS }}
+          />
+          {yearStarts.map((ym) => (
+            <ReferenceLine
+              key={ym}
+              x={ym}
+              stroke="#a1a1aa"
+              strokeDasharray="3 3"
+              label={{ value: `${ym.slice(0, 4)}년`, position: "top", fontSize: 10, fill: "#52525b" }}
+            />
+          ))}
+          <Tooltip content={<MonthTooltip boxSize={boxSize} />} cursor={{ stroke: "#a1a1aa" }} />
+          <Line type="linear" dataKey="v" stroke={COLOR_SHIPMENT} strokeWidth={2} connectNulls={false} dot={false} activeDot={{ r: 5 }} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
