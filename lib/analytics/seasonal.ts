@@ -128,7 +128,7 @@ export function describeNow(index: number | null, month: number, days: number | 
 export function describeLag(best: LagRow | null): string {
   if (!best || best.r === null) return "생산·출고 상관을 산정할 수 없습니다 (변동이 없거나 기간이 짧음).";
   const strength = best.r >= 0.7 ? "강함" : best.r >= 0.4 ? "보통" : best.r >= 0.2 ? "약함" : "거의 없음";
-  const when = best.lag === 0 ? "생산한 달에 바로 출고되는 경향" : `생산 후 ${best.lag}개월 뒤 출고 경향`;
+  const when = best.lag === 0 ? "동월 생산량과 정상 출고량의 상관계수가 가장 높음" : `생산량과 ${best.lag}개월 뒤 정상 출고량의 상관계수가 가장 높음`;
   return `${when} (r=${best.r.toFixed(2)}, 상관 ${strength})`;
 }
 

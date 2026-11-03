@@ -362,7 +362,7 @@ async function Overview({ period, year, link }: { period: PeriodData; year: Year
           unit="상관계수 r"
           basis={`분석 기간 ${lagRange} · 월별 합계 · 연도 버튼과 무관`}
         />
-        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k. 생산·판매를 함께 비교하므로 양쪽 실적이 있는 품번만 합산.</p>
+        <p className="text-xs font-medium text-zinc-700">A급 생산입고와 정상 출고가 모두 있는 품번의 월별 낱개 합계를 비교합니다. 개별 제품의 출고 소요기간은 알 수 없습니다.</p>
         <LagChart rows={o.totalLags} best={o.totalBest?.lag ?? null} />
         <LagTable rows={o.totalLags} best={o.totalBest?.lag ?? null} />
         <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(o.totalBest)}</p>
