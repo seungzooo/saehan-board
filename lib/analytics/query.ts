@@ -9,6 +9,8 @@
  * - 시차: 생산월 t ↔ 출고월 t+k, k = 0..6, 달력 기준. 유효 월 쌍 수 n을 함께 낸다.
  */
 import { prisma } from "@/lib/db";
+import { shipUnitLabel } from "@/lib/managed";
+import type { PeakEvidence } from "./explain";
 import type { AvailableStock } from "@/lib/availableStock";
 import { getMonthlyUnits } from "./shipments";
 import { effectiveCompletion } from "./completion";
@@ -234,7 +236,16 @@ export function seoulMonth(now = new Date()): number {
 
 // ───────────────────────── 전체 요약 ─────────────────────────
 
-export type SeasonalTopRow = { code: string; name: string; peakMonth: number; peakIndex: number };
+export type SeasonalTopRow = {
+  code: string;
+  name: string;
+  peakMonth: number;
+  /** 집중된 달의 5년 평균 ÷ 분석 기간 전체 월평균 = 평소 월평균의 몇 배 */
+  peakIndex: number;
+  /** 수량 단위(포장 단위 환산) — 박스·개·파렛트·필름·포장 */
+  unitLabel: string;
+  evidence: PeakEvidence;
+};
 
 export async function getOverview(seg: Segment) {
   const [rows, codes, basis] = await Promise.all([
@@ -265,9 +276,12 @@ export async function getOverview(seg: Segment) {
     MAX_LAG,
   );
 
+  // 계절 TOP 10 (정렬 = 집중된 달의 평소 대비 배수 큰 순, 대상 = 분석 기간 중 출고 있는 달 MIN_ACTIVE_MONTHS 이상)
   const candidates: { code: string; peakMonth: number; peakIndex: number }[] = [];
+  const seriesOf = new Map<string, number[]>();
   for (const [code, m] of byProduct) {
     const s = fillSeries(sm, m);
+    seriesOf.set(code, s);
     if (s.filter((v) => v > 0).length < MIN_ACTIVE_MONTHS) continue;
     let peak: SeasonalRow | null = null;
     for (const r of seasonalIndex(sm, s)) if (r.index !== null && (peak === null || r.index > (peak.index as number))) peak = r;
@@ -275,9 +289,12 @@ export async function getOverview(seg: Segment) {
   }
   candidates.sort((a, b) => b.peakIndex - a.peakIndex);
   const top = candidates.slice(0, 10);
-  const products = await prisma.product.findMany({ where: { code: { in: top.map((t) => t.code) } }, select: { code: true, name: true } });
-  const nameOf = new Map(products.map((p) => [p.code, p.name]));
-  const topRows: SeasonalTopRow[] = top.map((t) => ({ ...t, name: nameOf.get(t.code) ?? t.code }));
+  const products = await prisma.product.findMany({ where: { code: { in: top.map((t) => t.code) } }, select: { code: true, name: true, packUnit: true, unitsPerBox: true } });
+  const pOf = new Map(products.map((p) => [p.code, p]));
+  const topRows: SeasonalTopRow[] = top.map((t) => {
+    const p = pOf.get(t.code);
+    return { ...t, name: p?.name ?? t.code, unitLabel: shipUnitLabel(p?.packUnit, p?.unitsPerBox), evidence: peakEvidence(sm, seriesOf.get(t.code)!, t.peakMonth) };
+  });
 
   return {
     basis,
@@ -314,4 +331,28 @@ function shiftMonth(ym: string, delta: number): string {
   const [y, m] = ym.split("-").map(Number);
   const idx = y * 12 + (m - 1) + delta;
   return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}`;
+}
+
+/**
+ * 근거: 집중된 달의 연도별 출고량과 그해 월평균(그해 분석 기간 안 달들의 평균), 분석 기간 전체 월평균(= 평소).
+ * 그해가 12개월 모두 분석 기간 안이어야 완전한 해(비교 가능)로 센다.
+ */
+export function peakEvidence(months: string[], series: number[], month: number): PeakEvidence {
+  const byYear = new Map<number, { sum: number; n: number; value: number }>();
+  months.forEach((ym, i) => {
+    const y = Number(ym.slice(0, 4));
+    const e = byYear.get(y) ?? { sum: 0, n: 0, value: 0 };
+    e.sum += series[i];
+    e.n++;
+    if (Number(ym.slice(5, 7)) === month) e.value = series[i];
+    byYear.set(y, e);
+  });
+  const overallMean = series.length ? series.reduce((a, b) => a + b, 0) / series.length : 0;
+  const same = months.map((ym, i) => (Number(ym.slice(5, 7)) === month ? series[i] : null)).filter((v): v is number => v !== null);
+  return {
+    month,
+    overallMean,
+    monthMean: same.length ? same.reduce((a, b) => a + b, 0) / same.length : 0,
+    years: [...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([year, e]) => ({ year, value: e.value, yearMean: e.n ? e.sum / e.n : 0, complete: e.n === 12 })),
+  };
 }

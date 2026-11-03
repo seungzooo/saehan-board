@@ -2,7 +2,7 @@ import { ChartHead, LagChart } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
 import { cachedAnalysisBasis, cachedCompletionInfo, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
 import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
-import { getLiveStock, MAX_LAG, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
+import { getLiveStock, MAX_LAG, MIN_ACTIVE_MONTHS, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
 import {
   describeLagCalendar,
   describeNow,
@@ -19,6 +19,8 @@ import { availableText, daysText, productInfoText, StatusBadge, stockStatus } fr
 import Link from "next/link";
 import Section from "./Section";
 import ShipmentSection from "./ShipmentSection";
+import TopTable from "./TopTable";
+import { stockCell } from "@/lib/analytics/stockCell";
 import PickChart from "@/components/PickChart";
 import { COLOR_PRODUCTION, COLOR_SHIPMENT } from "@/components/charts";
 import { returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
@@ -308,7 +310,7 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
   );
 }
 
-async function Overview({ period, year, link }: { period: PeriodData; year: YearChoice; link: (p: Record<string, string | undefined>) => string }) {
+async function Overview({ period, year }: { period: PeriodData; year: YearChoice; link?: (p: Record<string, string | undefined>) => string }) {
   const [o, unitsData] = await Promise.all([cachedOverview(), cachedMonthlyUnits(null)]);
   const live = await getLiveStock(o.top.map((t) => t.code));
   const ctx = contextOf(period);
@@ -343,7 +345,7 @@ async function Overview({ period, year, link }: { period: PeriodData; year: Year
         answer={`${describeYearly(yearly)} ${describeSeason(seasonal)}`}
       >
       <section data-testid="year-heatmap">
-        <YearHeatmap rows={yearly} unit="개" />
+        <YearHeatmap rows={yearly} unit="개" testid="season-heatmap" />
       </section>
       </Section>
 
@@ -363,63 +365,24 @@ async function Overview({ period, year, link }: { period: PeriodData; year: Year
       <Section
         id="top"
         question="특정 달에 출고가 몰리는 품목은?"
-        meta={`분석 기간 ${range} · 판매 24개월 이상인 ${o.eligible.toLocaleString()}품목 중 · 단위 품목 포장 단위 · ${asOf}`}
+        meta={`분석 기간 ${range} · 출고 있는 달 ${MIN_ACTIVE_MONTHS}개 이상인 ${o.eligible.toLocaleString()}품목 중 · 단위 품목 포장 단위 · ${asOf}`}
+        answer={
+          o.top.length
+            ? `${o.top[0].name}은(는) ${o.top[0].peakMonth}월 출고가 평소 월평균의 ${o.top[0].peakIndex.toFixed(1)}배 — 집중도가 가장 큽니다.`
+            : "조건을 만족하는 품목이 없습니다."
+        }
       >
-      <section>
-        {o.top.length === 0 ? (
-          <p className="rounded-lg border border-zinc-200 p-3 text-sm text-zinc-500">조건을 만족하는 품목이 없습니다.</p>
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-zinc-200">
-            <table className="num w-full table-fixed text-sm">
-              <thead className="bg-zinc-50 text-xs text-zinc-500">
-                <tr>
-                  <th className="px-2 py-2 text-left font-medium">품명</th>
-                  <th className="w-12 px-2 py-2 text-right font-medium">최고 월</th>
-                  <th className="w-12 px-2 py-2 text-right font-medium">지수</th>
-                  <th className="w-[4.5rem] px-2 py-2 text-right font-medium">현재 재고</th>
-                  <th className="w-14 px-2 py-2 text-right font-medium">소진</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200">
-                {o.top.map((r) => {
-                  const href = link({ code: r.code });
-                  const { stock, days } = live.get(r.code)!;
-                  const st = stockStatus(stock, days);
-                  return (
-                    <tr key={r.code} className="hover:bg-blue-50">
-                      <td className="truncate px-2 py-0">
-                        <Link href={href} className="block py-3">
-                          {r.name}
-                        </Link>
-                      </td>
-                      <td className="px-2 py-0 text-right">
-                        <Link href={href} className="block py-3">
-                          {r.peakMonth}월
-                        </Link>
-                      </td>
-                      <td className="px-2 py-0 text-right font-semibold text-blue-800">
-                        <Link href={href} className="block py-3">
-                          {r.peakIndex.toFixed(2)}
-                        </Link>
-                      </td>
-                      <td className={`px-2 py-0 text-right ${st.numClass}`}>
-                        <Link href={`/stock/${encodeURIComponent(r.code)}`} className="block py-3 text-xs">
-                          {availableText(stock)}
-                        </Link>
-                      </td>
-                      <td className="px-2 py-0 text-right text-xs">
-                        <Link href={`/stock/${encodeURIComponent(r.code)}`} className="block py-3">
-                          {daysText(days)}
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <p className="text-xs text-zinc-500">
+          정렬: 5년 평균으로 본 가장 많은 달(집중된 달)이 평소(분석 기간 전체 월평균)의 몇 배인지 큰 순. 같은 달이 여러 해 반복됐는지, 한 해 대량 출고 때문인지는 &ldquo;근거 보기&rdquo;.
+        </p>
+        {o.top.length > 0 && (
+          <TopTable
+            rows={o.top.map((r) => {
+              const { stock, days } = live.get(r.code)!;
+              return { code: r.code, name: r.name, peakMonth: r.peakMonth, peakIndex: r.peakIndex, unitLabel: r.unitLabel, evidence: r.evidence, stock: stockCell(r.code, stock, days) };
+            })}
+          />
         )}
-      </section>
       </Section>
     </div>
   );

@@ -125,14 +125,14 @@ test("품목: 박스 확인 품목은 박스 환산 — 제목·비교 단위 �
   await expect(page.getByTestId("returns")).toContainText("반품");
   const heat = page.getByTestId("year-heatmap");
   await expect(heat).toContainText("분석 기간");
-  await expect(heat.getByRole("rowheader")).toHaveCount(5);
+  await expect(heat.getByTestId("heat-year")).toHaveCount(5);
   await expect(page.getByTestId("lag-table").locator("thead th")).toHaveCount(8);
   await expectNoHorizontalScroll(page);
 });
 
 test("전체 요약: 연도별 히트맵·시차 상관에 각자 분석 기간", async ({ page }) => {
   await page.goto("/analytics");
-  await expect(page.getByTestId("year-heatmap")).toContainText("분석 기간 2021-01~2025-12");
+  await expect(page.getByTestId("meta-season")).toContainText("분석 기간 2021-01~2025-12");
   await expect(page.getByTestId("lag-table")).toBeVisible();
   await expect(page.getByTestId("shipment-compare")).toContainText("반품");
   await expectNoHorizontalScroll(page);
@@ -188,4 +188,45 @@ test("[전체 기간]에만 연도별 정상 출고 합계 + 전년 대비 증�
   await rows.nth(4).click();
   await expect(yt.getByTestId("yearly-chart-detail")).toContainText(/2025년 \(1~12월\)/);
   await expect(yt.getByTestId("yearly-chart-detail")).toContainText(/전년 [\d,]+개 대비 [+−]\d+%/);
+});
+
+test("계절 패턴: 셀에 월평균 대비 %, 누르면 실제 출고·그해 월평균·차이", async ({ page }) => {
+  await page.goto("/analytics");
+  await expect(page.getByTestId("question-season")).toHaveText("어느 달에 평소보다 많이 출고됐나?");
+  const cells = page.getByTestId("season-heatmap").getByTestId("heat-cell");
+  await expect(cells).toHaveCount(60);
+  const okCell = page.locator('[data-testid="season-heatmap"] [data-testid="heat-cell"][data-kind="ok"]').first();
+  await expect(okCell).toHaveText(/^[+−]\d+%$/);
+  await okCell.click();
+  const d = page.getByTestId("season-heatmap-detail");
+  await expect(d).toContainText(/실제 출고 [\d,]+개 · 그해 월평균 [\d,]+개 · 차이 [+−][\d,]+개 \([+−]\d+%\)/);
+  // 키보드: 셀에 포커스 후 Enter
+  await cells.nth(5).focus();
+  await page.keyboard.press("Enter");
+  await expect(d).toContainText("2021년 6월");
+});
+
+test("품목 TOP 10: 근거 보기(연도별 출고·그해 월평균·평균 초과 연도 수)와 재고 칸이 품목 상세와 같은 값", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto("/analytics");
+  await expect(page.getByTestId("question-top")).toHaveText("특정 달에 출고가 몰리는 품목은?");
+  const rows = page.getByTestId("top-row");
+  await expect(rows).toHaveCount(10);
+  await rows.first().getByTestId("why-button").click();
+  const why = page.getByTestId("why-detail");
+  await expect(why).toContainText("평소 = 분석 기간 전체의 월평균");
+  await expect(why).toContainText(/평균을 넘은 연도 \d \/ 비교 가능한 연도 \d/);
+  await expect(page.getByTestId("why-detail")).toHaveCount(1); // 하나만 펼침
+  // 재고 칸 ↔ 품목 상세 대조 (품번 기준)
+  const checks: { code: string; state: string; text: string }[] = [];
+  for (let i = 0; i < 10; i++) {
+    const r = rows.nth(i);
+    checks.push({ code: (await r.getAttribute("data-code"))!, state: (await r.getByTestId("stock-cell").getAttribute("data-state"))!, text: await r.getByTestId("stock-cell").innerText() });
+  }
+  for (const c of checks) {
+    await page.goto(`/stock/${encodeURIComponent(c.code)}`);
+    const avail = (await page.getByTestId("available").innerText()).replace(/\s+/g, "");
+    if (c.state === "CHECK") expect(avail, c.code).toBe("확인필요");
+    else expect(c.text.replace(/\s+/g, ""), c.code).toContain(avail.replace("박스", "") + "박스");
+  }
 });
