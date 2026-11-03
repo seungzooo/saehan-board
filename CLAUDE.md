@@ -232,6 +232,12 @@ MVP = F1 → F2 → F3 (F8은 삭제). 이 셋이 돌아가면 현재 임시 도
 - Customer는 판매실적 거래선 distinct. type은 위 기본값.
 - 기초재고(StockSnapshot) 실데이터는 아직 없다. 개발용으로 교집합 품번에 대해 최근 30일 출고량 × 1.5를 임시 기초재고로 넣고, 재고 엑셀 샘플을 받으면 교체.
 
+## 분석 화면 데이터 경로 (2026-11-03 추적)
+
+- **원본 보관**: 판매실적 업로드(`/upload` 출고실적 탭 → `lib/excel/import.ts importSales`) → `ShipmentHistory` 행 단위 보관 — 출고일(`date`·`yearMonth`), 품번, 거래처(`customerCode` = 거래선명), 전표번호, 출고구분(정상/반품), 판매형태, **출고수량 낱개(`qtyUnits`)**, 박스 환산(`qtyBox` = 출고수량 ÷ 포장단위수량). 생산실적은 `ProductionHistory`. 업로드 때 `rebuildMonthlyStat`가 `MonthlyStat`(품번×연월, 박스 환산)을 다시 만든다.
+- **화면별 조회**: 월별 출고 그래프·연별 합계·계절 히트맵(전체) = `ShipmentHistory` 낱개 월 합계(`getMonthlyUnitsData`). 품목 순위(계절 TOP 10)·시차 상관·품목 계절지수 = `MonthlyStat` 박스 환산(`getOverview`·`getProductAnalysisStatic`). 품목 출고 요약 = `ShipmentHistory` 연월×거래처 건수(`getItemShipData`).
+- **자동 갱신**: 사용자에게 월별 자료를 따로 받지 않는다. 같은 업로드 경로로 새 실적을 올리면 ① 행 추가(중복 건너뜀) ② `MonthlyStat` 재계산 ③ 캐시 무효화(`updateTag`) ④ 기간은 자료 범위·집계 완료 월에서 계산(연도 버튼·비교 구간·계절지수 60개월 창 `seasonMonths`) — 고정 연도를 쓰지 않는다.
+
 ## 분석 레이어 갱신 규칙 (F5·F6)
 
 계절지수·증가율·상관계수는 실시간 값이 아니다. 과거 실적에서 나오는 값이라 **새 실적이 들어올 때만 바뀐다.**

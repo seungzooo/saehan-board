@@ -28,8 +28,11 @@ import {
 } from "./seasonal";
 
 /** 5년 평균 계절지수 기간 (CLAUDE.md: 2021~2025 5개년) */
-export const SEASON_FROM = "2021-01";
-export const SEASON_TO = "2025-12";
+/**
+ * 계절지수(5년 평균·상위 10)의 분석 기간 = 출고 자료 범위의 끝(집계 완료 월로 자름)에서 거슬러 SEASON_YEARS년(60개 달).
+ * 고정 연도를 쓰지 않는다 — 새 출고실적을 같은 업로드 경로로 올려 집계 완료 월이 늘어나면 기간도 따라 이동한다.
+ */
+export const SEASON_YEARS = 5;
 /** 월별 추이 그래프 기간 */
 export const TREND_MONTHS = 24;
 /** 생산→출고 시차 최대 개월 */
@@ -112,11 +115,11 @@ export async function countIntersection(): Promise<number> {
 }
 
 /** 자료 범위로 자른 계절지수 기간 */
-function seasonMonths(cov: Coverage): string[] {
+export function seasonMonths(cov: Coverage): string[] {
   if (!cov) return [];
-  const from = cov.from > SEASON_FROM ? cov.from : SEASON_FROM;
-  const to = cov.to < SEASON_TO ? cov.to : SEASON_TO;
-  return from <= to ? monthRange(from, to) : [];
+  const start = shiftMonth(cov.to, -(SEASON_YEARS * 12 - 1));
+  const from = cov.from > start ? cov.from : start;
+  return from <= cov.to ? monthRange(from, cov.to) : [];
 }
 
 /** 생산·출고 자료 범위를 합친 달력 (시차 상관용) */
