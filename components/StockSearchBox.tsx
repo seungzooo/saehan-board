@@ -3,15 +3,30 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-/** 재고 검색창 — 상단 고정, 높이 56px, 자동 포커스. 입력 후 300ms 자동 검색, 엔터는 즉시 */
-export default function StockSearchBox({ initialQuery, basePath = "/" }: { initialQuery: string; basePath?: string }) {
+/**
+ * 재고 검색창 — 상단 고정, 높이 56px, 자동 포커스. 입력 후 300ms 자동 검색, 엔터는 즉시.
+ * "휴면 품목 포함" 토글: 기본은 관리 대상만 검색.
+ */
+export default function StockSearchBox({
+  initialQuery,
+  includeDormant = false,
+  basePath = "/",
+}: {
+  initialQuery: string;
+  includeDormant?: boolean;
+  basePath?: string;
+}) {
   const router = useRouter();
   const [q, setQ] = useState(initialQuery);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function go(value: string) {
+  function go(value: string, dormant = includeDormant) {
     const v = value.trim();
-    router.replace(v ? `${basePath}?q=${encodeURIComponent(v)}` : basePath);
+    const p = new URLSearchParams();
+    if (v) p.set("q", v);
+    if (dormant) p.set("dormant", "1");
+    const s = p.toString();
+    router.replace(s ? `${basePath}?${s}` : basePath);
   }
 
   useEffect(() => {
@@ -50,6 +65,16 @@ export default function StockSearchBox({ initialQuery, basePath = "/" }: { initi
           검색
         </button>
       </div>
+      <label className="mt-1 inline-flex min-h-8 cursor-pointer items-center gap-2 text-sm text-zinc-600">
+        <input
+          type="checkbox"
+          checked={includeDormant}
+          onChange={(e) => go(q, e.target.checked)}
+          className="h-4 w-4 accent-blue-600"
+          data-testid="dormant-toggle"
+        />
+        휴면 품목 포함
+      </label>
     </form>
   );
 }

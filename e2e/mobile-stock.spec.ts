@@ -31,7 +31,9 @@ test("390px 첫 화면 검색 → 상세: 수량·집계 시각이 첫 화면에
   expect((await search.boundingBox())!.height, "검색창 높이 56px").toBeGreaterThanOrEqual(56);
 
   await page.goto(`/?q=${encodeURIComponent(QUERY)}`);
-  const first = page.locator('main a[href^="/stock/"]').first();
+  // 확인 필요 품목만 있으면 접힌 "재고 미확인" 묶음을 연다
+  if ((await page.locator('main a[href^="/stock/"]:visible').count()) === 0) await page.getByTestId("unchecked-group").locator("summary").click();
+  const first = page.locator('main a[href^="/stock/"]:visible').first();
   await expect(first, `"${QUERY}" 검색 결과가 있어야 함`).toBeVisible();
   expect((await first.boundingBox())!.height, "결과 카드 터치 영역 48px 이상").toBeGreaterThanOrEqual(48);
   await expectNoHorizontalScroll(page);

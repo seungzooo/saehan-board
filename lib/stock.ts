@@ -2,7 +2,7 @@
  * F3 조회용 데이터 접근. 가용재고는 저장하지 않고 매번 computeAvailableStock으로 계산한다.
  */
 import { ANALYSIS_SALES_TYPE, ANALYSIS_SHIP_TYPE } from "@/config/excel-mapping";
-import { LOW_DAYS_THRESHOLD, SHIPMENT_WINDOW_DAYS } from "@/config/stock";
+import { SHIPMENT_WINDOW_DAYS } from "@/config/stock";
 import { computeAvailableStock, cutoffOf, type AvailableStock } from "@/lib/availableStock";
 import { prisma } from "@/lib/db";
 import { capacityQueryVariants, rankProducts } from "@/lib/search";
@@ -53,9 +53,17 @@ export async function getStockBasis(): Promise<StockBasis> {
  * 용량 인식: "2L"은 capacity 2000·이름의 2000ml도 후보에 넣고, 순위는 lib/search.ts rankProducts
  * (품번 정확 일치 → 용량 일치 → 온전한 토큰 → 부분 일치).
  */
-export async function searchStock(query: string): Promise<{ rows: StockRow[]; truncated: boolean }> {
+export type SearchScope = {
+  /** 관리 대상 품번. 주어지면 그 밖(휴면)은 결과에서 빼고 hiddenDormant로 센다 */
+  managedCodes?: Set<string> | null;
+};
+
+export async function searchStock(
+  query: string,
+  scope: SearchScope = {},
+): Promise<{ rows: StockRow[]; truncated: boolean; hiddenDormant: number; exactDormant: { code: string; name: string } | null }> {
   const terms = query.trim().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return { rows: [], truncated: false };
+  if (terms.length === 0) return { rows: [], truncated: false, hiddenDormant: 0, exactDormant: null };
 
   const candidates = await prisma.product.findMany({
     where: {
@@ -75,14 +83,22 @@ export async function searchStock(query: string): Promise<{ rows: StockRow[]; tr
     take: 400,
     select: { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true },
   });
-  const ranked = rankProducts(candidates, query);
+  const managed = scope.managedCodes;
+  const visible = managed ? candidates.filter((c) => managed.has(c.code)) : candidates;
+  const hidden = managed ? candidates.filter((c) => !managed.has(c.code)) : [];
+  const exact = hidden.find((c) => c.code.toLowerCase() === query.trim().toLowerCase()) ?? null;
+  const ranked = rankProducts(visible, query);
   const truncated = ranked.length > SEARCH_LIMIT;
   const page = ranked.slice(0, SEARCH_LIMIT);
-  return { rows: await toRows(page), truncated };
+  return {
+    rows: await toRows(page),
+    truncated,
+    hiddenDormant: hidden.length,
+    exactDormant: exact ? { code: exact.code, name: exact.name } : null,
+  };
 }
 
 type ProductLite = { code: string; name: string; capacity: string | null; packUnit: string; unitsPerBox: number; category: string | null };
-const PRODUCT_LITE = { code: true, name: true, capacity: true, packUnit: true, unitsPerBox: true, category: true } as const;
 
 async function toRows(products: ProductLite[]): Promise<StockRow[]> {
   const codes = products.map((p) => p.code);
@@ -94,14 +110,14 @@ async function toRows(products: ProductLite[]): Promise<StockRow[]> {
 }
 
 /**
- * 최근 30일 일평균 출고(박스). 창의 끝은 출고실적의 마지막 날짜(실적 기준일) — "지금" 기준이면
+ * 최근 30일 일평균 출고(박스). 창의 끝은 정상·내수 출고실적의 마지막 날짜(실적 기준일, 관리 대상 기준월과 같은 기준) — "지금" 기준이면
  * 실적 업로드가 늦어진 동안 전부 산정 불가가 되기 때문. basisTo에 그 날짜를 돌려준다.
  */
 export async function getShipmentRates(codes: string[]): Promise<Map<string, number> & { basisTo: string | null }> {
   const map = new Map<string, number>() as Map<string, number> & { basisTo: string | null };
   map.basisTo = null;
   if (codes.length === 0) return map;
-  const last = await prisma.shipmentHistory.aggregate({ _max: { date: true } });
+  const last = await prisma.shipmentHistory.aggregate({ _max: { date: true }, where: { shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE } });
   const to = last._max.date;
   if (!to) return map;
   const from = new Date(to.getTime() - (SHIPMENT_WINDOW_DAYS - 1) * 86400_000);
@@ -120,22 +136,7 @@ export function daysOfStock(stock: AvailableStock, avgPerDay: number | null, bas
   return { days: Math.max(0, stock.available) / avgPerDay, avgPerDay, basisTo };
 }
 
-export function isLowStock(d: DaysOfStock): boolean {
-  return d.days !== null && d.days <= LOW_DAYS_THRESHOLD;
-}
 
-/** 최근 재고 파일에 없는(미확인) 관리 대상 품목. 이름순, limit 건 */
-export async function listUnchecked(limit = 200): Promise<{ rows: ProductLite[]; total: number }> {
-  const batch = await getLatestStockBatch();
-  const where = batch
-    ? { isActive: true, snapshots: { none: { batchId: batch.id } } }
-    : { isActive: true };
-  const [rows, total] = await Promise.all([
-    prisma.product.findMany({ where, orderBy: { name: "asc" }, take: limit, select: PRODUCT_LITE }),
-    prisma.product.count({ where }),
-  ]);
-  return { rows, total };
-}
 
 /** 여러 품목의 가용재고를 한 번에 계산 (쿼리 3개) */
 export async function computeForProducts(codes: string[]): Promise<Map<string, AvailableStock>> {
@@ -192,21 +193,10 @@ export async function getProductDetail(code: string) {
   return { product, stock, days: daysOfStock(stock, rates.get(code) ?? null, rates.basisTo), history };
 }
 
-/** 확인된 품목(최근 재고 파일에 있음) 중 예상 소진일수 ≤ LOW_DAYS_THRESHOLD. 소진일수 오름차순 */
-export async function listLowStock(): Promise<StockRow[]> {
-  const batch = await getLatestStockBatch();
-  if (!batch) return [];
-  const products = await prisma.product.findMany({
-    where: { isActive: true, snapshots: { some: { batchId: batch.id } } },
-    select: PRODUCT_LITE,
-  });
-  const rows = await toRows(products);
-  return rows.filter((r) => isLowStock(r.days)).sort((a, b) => (a.days.days ?? 0) - (b.days.days ?? 0));
-}
 
 /** 최근 30일 일별 출고(박스, 정상·내수). 끝 = 출고실적 마지막 날짜. 스파크라인용 */
 export async function getDailyShipments(code: string): Promise<{ basisTo: string | null; days: { date: string; qtyBox: number }[] }> {
-  const last = await prisma.shipmentHistory.aggregate({ _max: { date: true } });
+  const last = await prisma.shipmentHistory.aggregate({ _max: { date: true }, where: { shipType: ANALYSIS_SHIP_TYPE, salesType: ANALYSIS_SALES_TYPE } });
   const to = last._max.date;
   if (!to) return { basisTo: null, days: [] };
   const from = new Date(to.getTime() - (SHIPMENT_WINDOW_DAYS - 1) * 86400_000);
@@ -224,23 +214,3 @@ export async function getDailyShipments(code: string): Promise<{ basisTo: string
   return { basisTo: to.toISOString().slice(0, 10), days };
 }
 
-export type ListFilter = "all" | "checked" | "unchecked";
-export const LIST_PAGE_SIZE = 50;
-
-/** 대시보드 숫자 → 목록: 전체 / 확인됨(최근 재고 파일에 있음) / 미확인. 이름순, 50개씩 */
-export async function listByFilter(filter: ListFilter, page: number): Promise<{ rows: StockRow[]; total: number }> {
-  const batch = await getLatestStockBatch();
-  const where =
-    filter === "checked"
-      ? batch
-        ? { isActive: true, snapshots: { some: { batchId: batch.id } } }
-        : { isActive: true, code: { in: [] as string[] } }
-      : filter === "unchecked" && batch
-        ? { isActive: true, snapshots: { none: { batchId: batch.id } } }
-        : { isActive: true };
-  const [products, total] = await Promise.all([
-    prisma.product.findMany({ where, orderBy: { name: "asc" }, skip: (page - 1) * LIST_PAGE_SIZE, take: LIST_PAGE_SIZE, select: PRODUCT_LITE }),
-    prisma.product.count({ where }),
-  ]);
-  return { rows: await toRows(products), total };
-}

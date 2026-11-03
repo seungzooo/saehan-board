@@ -1,6 +1,7 @@
 import AdjustmentTable from "@/components/AdjustmentTable";
 import CalcBar from "@/components/CalcBar";
 import { ChartHead, Sparkline } from "@/components/charts";
+import { getProductActivity } from "@/lib/activity";
 import { getDailyShipments, getProductDetail } from "@/lib/stock";
 import { availableText, BasisLine, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
 import Link from "next/link";
@@ -18,7 +19,7 @@ export default async function ProductDetailPage({
 }) {
   const [{ code }, { q }] = await Promise.all([params, searchParams]);
   const productCode = decodeURIComponent(code);
-  const [detail, daily] = await Promise.all([getProductDetail(productCode), getDailyShipments(productCode)]);
+  const [detail, daily, act] = await Promise.all([getProductDetail(productCode), getDailyShipments(productCode), getProductActivity(productCode)]);
   if (!detail) notFound();
   const { product, stock, days, history } = detail;
   const needsCheck = stock.available === null;
@@ -37,6 +38,17 @@ export default async function ProductDetailPage({
       <header className="min-w-0">
         <h1 className="break-words text-xl font-bold">{product.name}</h1>
         <p className="mt-0.5 break-words text-sm text-zinc-500">{productInfoText(product)}</p>
+        <p data-testid="managed-status" className="num mt-1 text-xs text-zinc-600">
+          {act.managed ? (
+            <span className="rounded bg-blue-50 px-1.5 py-0.5 font-semibold text-blue-700">관리 대상</span>
+          ) : (
+            <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-semibold text-zinc-600">휴면</span>
+          )}
+          <span className="ml-1">
+            최근 정상·내수 출고 {act.lastShipDate ?? "없음"}
+            {act.basis && ` · 기준 ${act.basis.fromYm}~${act.basis.basisYm}`}
+          </span>
+        </p>
       </header>
 
       {/* 현재 재고 */}
