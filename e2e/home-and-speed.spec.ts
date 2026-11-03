@@ -112,7 +112,7 @@ test("분석: 집계 완료 월과 그 값을 정한 업로드 표시", async ({
 test("출고실적 업로드: 2026-03-15까지 있는 파일 → 기본 제안 2026-02 (저장하지 않음)", async ({ page }) => {
   test.skip(!PIN, "UPLOAD_PIN이 설정되지 않음");
   await page.goto("/upload?kind=SALES");
-  await page.getByLabel("PIN").fill(PIN);
+  await page.getByLabel("관리 코드").fill(PIN);
   await page.getByRole("button", { name: "확인" }).click();
   await page.getByRole("tab", { name: "출고실적" }).click();
   const csv =

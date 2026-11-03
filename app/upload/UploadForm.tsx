@@ -115,7 +115,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
   }
 
   const previewOk = preview?.status === "ok" ? preview : null;
-  const canSaveStock = kind !== "STOCK" || (previewOk !== null && !previewOk.duplicate);
+  const canSaveStock = kind !== "STOCK" || previewOk !== null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -216,7 +216,7 @@ export default function UploadForm({ initialKind }: { initialKind: UploadKind })
           disabled={!file || pending || !canSaveStock}
           className="h-12 rounded-md bg-blue-600 text-base font-semibold text-white disabled:bg-zinc-300"
         >
-          {pending ? "처리 중…" : kind === "STOCK" ? (mode === "MERGE" ? "있는 품목만 갱신으로 저장" : "전체 교체로 저장") : `${tab.label} 업로드`}
+          {pending ? "처리 중…" : kind === "STOCK" ? (mode === "MERGE" ? "일부 갱신으로 저장" : "전체 교체로 저장") : `${tab.label} 업로드`}
         </button>
       </form>
 
@@ -256,8 +256,9 @@ function PreviewCard({
   return (
     <div className="flex flex-col gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
       {p.duplicate && (
-        <p className="font-semibold text-amber-800">
-          이미 업로드된 파일입니다 ({formatDateTime(p.duplicate.uploadedAt)}). 다시 저장할 수 없습니다.
+        <p data-testid="preview-same-file" className="font-semibold text-amber-800">
+          같은 파일을 이미 반영했습니다 ({formatDateTime(p.duplicate.uploadedAt)} · 집계 {p.duplicate.stockAsOf ? formatDateTime(p.duplicate.stockAsOf) : "시각 미확인"} · 사후 불량{" "}
+          {p.duplicate.defectApplied ? "반영됨" : "미반영"}). 같은 집계 시각·불량 선택이면 다시 저장되지 않고, 바꾸면 새 기준으로 반영됩니다.
         </p>
       )}
       <p className="font-semibold">
@@ -311,7 +312,7 @@ function PreviewCard({
           {(
             [
               ["REPLACE", "전체 교체", "파일에 없는 품목은 '재고 확인 필요'"],
-              ["MERGE", "있는 품목만 갱신", "파일에 없는 품목은 기존 수량 유지"],
+              ["MERGE", "일부 갱신", "파일에 없는 품목은 이전 수량·집계 시각 유지"],
             ] as const
           ).map(([v, label, desc]) => (
             <label
@@ -429,7 +430,7 @@ function ResultCard({
     const x = r.result;
     const ec = errorCounts(x.errors);
     return (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
+      <div data-testid="upload-saved" className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
         <p className="text-base font-semibold text-green-800">
           {summarize(kind, r)}
           <SampleNote fileName={fileName} />
@@ -492,7 +493,7 @@ function ResultCard({
   if (r.status === "duplicate") {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-semibold">이미 업로드된 파일입니다. 다시 저장하지 않았습니다.</p>
+        <p className="font-semibold">같은 파일을 같은 설정으로 이미 반영했습니다. 다시 저장하지 않았습니다.</p>
         <p className="mt-1">
           {r.fileName} · {formatDateTime(r.uploadedAt)}
         </p>

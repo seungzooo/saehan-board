@@ -169,16 +169,18 @@ export async function importStock(db: Db, sheet: string[][], ctx: StockImportCtx
     stockAsOf: ctx.stockAsOf,
     uploadedBy: ctx.uploadedBy,
     batchId: ctx.batchId,
+    carried: false,
   }));
-  // MERGE: 파일에 없는 품목은 직전 배치 수량을 그대로 이월 (확인 필요가 되지 않도록)
+  // MERGE: 파일에 없는 품목은 직전 배치의 수량과 **그 품목의 집계·반영 시각**을 그대로 이월한다.
+  // 새 파일 시각을 붙이면 이전 집계 이후 입력한 출고·불량이 "파일이 이미 반영"으로 잘못 사라진다.
   let carried = 0;
   if (ctx.mode === "MERGE" && ctx.carryFromBatchId) {
     const prev = await db.stockSnapshot.findMany({
       where: { batchId: ctx.carryFromBatchId, productCode: { notIn: [...qty.keys()] } },
-      select: { productCode: true, qtyBox: true },
+      select: { productCode: true, qtyBox: true, uploadedAt: true, stockAsOf: true, uploadedBy: true },
     });
     for (const p of prev) {
-      data.push({ productCode: p.productCode, qtyBox: p.qtyBox, uploadedAt: ctx.uploadedAt, stockAsOf: ctx.stockAsOf, uploadedBy: ctx.uploadedBy, batchId: ctx.batchId });
+      data.push({ productCode: p.productCode, qtyBox: p.qtyBox, uploadedAt: p.uploadedAt, stockAsOf: p.stockAsOf, uploadedBy: p.uploadedBy, batchId: ctx.batchId, carried: true });
     }
     carried = prev.length;
   }

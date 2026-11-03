@@ -34,6 +34,10 @@
 - 수주(ORDER)는 선차감. 그 수주를 이행한 출고를 `orderId`로 연결하면 수주 차감이 해제된다 (이중 차감 방지).
 - 정정은 원기록을 두고 차이값 행(`correctsId`, `correctionReason`)을 추가한다. 음수 가능. 원기록 취소 시 정정도 함께 취소.
 - 저장은 클라이언트 요청 ID(`requestId` unique)로 멱등 — 연타·동시 입력에서 한 건만 저장.
+- **일부 갱신(MERGE) = 품목별 기준 시각 (2026-11-03):** 파일에 있는 품목만 새 수량·새 집계 시각. 파일에 없는 품목은 직전 배치의 수량과 **그 품목의 집계 시각·반영 시각을 그대로** 이월(`StockSnapshot.carried=true`). 차감 기준점은 배치가 아니라 **품목 스냅샷의 `stockAsOf`(없으면 `uploadedAt`)** 이다 — 이월 품목에 새 파일 시각을 붙이면 이전 집계 이후 입력한 출고·불량이 잘못 리셋되기 때문. 화면(상세 `BasisLine`, 목록 `row-asof`, 검색 카드 `card-asof`)은 품목별 집계 시각을 보여주고, 최신 배치가 일부 갱신이면 헤더에 "일부 갱신 파일 — 파일에 없던 품목은 이전 수량·집계 시각 유지". 테스트: 11-03 09:00 전체(A·B) → 11-04 10:00 일부 갱신(A만) → A 10:00, B 09:00 (`tests/upload-preview.test.ts`).
+- **불량 리셋도 품목별:** 품목의 리셋 시점 = 그 품목이 **파일에 실제로 있던**(이월 아님) `defectApplied=true` 배치 중 가장 늦은 기준 시각 (`lib/stock.ts getDefectResetAt(codes)`). 일부 갱신 파일에 없던 품목은 그 파일의 "불량 반영됨"으로 리셋되지 않는다.
+- **같은 재고 파일 재반영:** 재고 배치의 `fileHash` = 파일 해시 + `:` + (집계 시각·불량 반영·모드) 해시 (`stockUploadKey`). 같은 파일·같은 설정은 중복(저장 안 함), 설정이 다르면 새 배치. 미리보기는 같은 내용의 파일을 이미 반영했으면 안내만 하고 저장을 막지 않는다. 이전 방식(파일 해시만) 배치도 설정이 같으면 중복으로 본다.
+- **시연 시나리오 (e2e `e2e/demo-scenario.spec.ts`, 단위 `tests/upload-preview.test.ts`):** 재고 90(집계 09:00) → 09:05 불량 5 → 09:12 같은 파일을 "불량 반영됨"으로 반영 → **85박스 · 집계 09:00** (09:00 파일은 09:05 불량을 모르므로 리셋 시점 09:00 이후 불량은 계속 차감). 쓰기 e2e는 운영 public 스키마가 아니라 분리 스키마에서만: `DATABASE_SCHEMA=demo npx tsx scripts/demo-schema.ts` → 서버를 `DATABASE_SCHEMA=demo`로 → `E2E_DEMO=1`. `lib/db.ts`가 `DATABASE_SCHEMA`를 Prisma 어댑터 `schema`로 넘기고, 분석 캐시 키에도 스키마를 넣는다. 스펙은 첫 단계에서 시연 품목 `DEMO-A`가 있는 서버인지 확인하고, 아니면 아무것도 쓰지 않는다.
 - 불량 차감 리셋은 **배치별로 결정**한다. 재고 업로드 시 "이 파일에 사후 불량이 반영되어 있나요?"를 묻고, 예(`UploadBatch.defectApplied=true`)이면 그 배치의 반영 시각 이전 불량 차감을 무시한다. 아니오면 유지. (환경변수 `DEFECT_RESET_ON_UPLOAD`는 폐기)
 - 최근 재고 파일에 없는 품목은 가용재고를 **"확인 필요"**(null)로 표시하고 음수로 계산하지 않는다. 파일에 0으로 있는 품목은 "0박스". 둘을 구분한다.
 - 재고 배치에는 **집계 기준 시각 `stockAsOf`**(담당자 입력, ERP 조회 시각)와 **반영 시각 `uploadedAt`**이 따로 있다. 화면은 "집계 기준 11-03 09:00 · 반영 11-03 09:12"로 표시하고, 집계 시각이 없으면 "집계 시각 미확인", 반영 후 24시간(`config/stock.ts STALE_AFTER_HOURS`)이 지나면 "갱신 지연" 배지.
@@ -54,7 +58,7 @@
 
 ## 화면 표기 규칙
 
-- 화면에는 "가용재고" 대신 **"현재 재고"**로 쓴다. 배정 물량(수주 등) 처리 기준을 회사에 확인하기 전까지. 코드·산식 이름(`available`, `availableStock.ts`)은 그대로 둔다.
+- 화면에는 "가용재고" 대신 **"현재 재고"**로 쓴다(제목·카드·상세·홈·목록 모두). 배정 물량(수주 등) 처리 기준을 회사에 확인하기 전까지. 코드·산식 이름(`available`, `availableStock.ts`)은 그대로 둔다. 품목 상세 수량 아래에 "다른 거래처 배정분 반영 여부는 생산지원팀 확인"(testid `allocation-note`).
 - 상태는 색 + 글자: 정상 = 검정, 소진 3일 이하 = 주황 "곧 소진", 0박스 이하 = 빨강 "재고 없음", 최신 파일에 없음 = 회색 점선 테두리 "확인 필요". 규칙은 `lib/stockDisplay.tsx stockStatus()` 한 곳.
 - 흰 배경, 얇은 회색 테두리, 그림자 없음, 포인트 색 파랑은 버튼·현재 메뉴에만. 글꼴 Pretendard. 숫자는 tabular-nums.
 - 화면의 숫자·줄은 누르면 상세로 간다 (막다른 화면 금지).
@@ -69,7 +73,7 @@
 - **F5 분석 탭 구현:** `/analytics` — 품목별 24개월 생산·판매(정상)·반품, 5년 평균 + 연도별 계절지수 히트맵, 생산→판매 시차 상관 k=0~6(유효 쌍 수), 전체 요약. 아래 F5 절 참고.
 - **화면 구조:** `/` = 재고 검색(검색어 없으면 대시보드), `/stock?…` = 대시보드 숫자별 목록, `/stock/[code]` 품목 상세, `/adjust/[id]` 변동 상세, `/upload/[id]` 업로드 상세·취소.
 - **중복 품번 — 구현 (2026-11-03):** 같은 재고 파일에 같은 품번이 두 줄 이상이면 합산하지 않는다. 그 품번의 행은 전부 "중복 품번" 행 오류(`RowErrorKind=DUP`)로 제외되어 스냅샷이 없으므로 화면에 `확인 필요`. 업로드 미리보기에 "중복 품번 N개", 저장 전 행 오류 확인 단계를 거친다 (`lib/excel/import.ts duplicateCodes`).
-- **PIN 보호 — 구현 (2026-11-03):** `lib/pin.ts`(HMAC 서명 세션 쿠키 `sb_pin`, PIN을 바꾸면 기존 세션 무효), `components/PinGate.tsx`(화면), 각 서버 액션 첫 줄 `requirePin()`(화면 가림만으로 보호하지 않음). 보호 대상: `/upload`, `/upload/[id]`, `/adjust` 및 `app/upload/actions.ts`·`app/adjust/actions.ts`의 모든 액션. 공개: `/`, `/stock*`, `/adjust/[id]`(변동 상세 조회), `/analytics`. Vercel production·preview에 `UPLOAD_PIN` 설정됨 (값은 저장소에 없음).
+- **관리 코드(PIN) 보호 — 구현 (2026-11-03):** 화면 문구는 제목 "관리자 확인", 설명 "재고 업로드와 변동 입력은 생산지원팀만 할 수 있습니다. 관리 코드를 입력하세요.", 입력칸 "관리 코드". 화면·오류 메시지에 "PIN", "공용 PIN", "UPLOAD_PIN", "환경변수" 같은 내부 용어를 쓰지 않는다(e2e 검사). `lib/pin.ts`(HMAC 서명 세션 쿠키 `sb_pin`, PIN을 바꾸면 기존 세션 무효), `components/PinGate.tsx`(화면), 각 서버 액션 첫 줄 `requirePin()`(화면 가림만으로 보호하지 않음). 보호 대상: `/upload`, `/upload/[id]`, `/adjust` 및 `app/upload/actions.ts`·`app/adjust/actions.ts`의 모든 액션. 공개: `/`, `/stock*`, `/adjust/[id]`(변동 상세 조회), `/analytics`. Vercel production·preview에 `UPLOAD_PIN` 설정됨 (값은 저장소에 없음).
 - **환경변수 `DEFECT_RESET_ON_UPLOAD` 사용 금지:** `UploadBatch.defectApplied`에 업로드별 선택을 저장하며, `lib/stock.ts`는 마지막 `defectApplied=true` 배치의 기준 시각(`stockAsOf`, 없으면 `uploadedAt`) 이후 불량만 차감한다. 이후 `아니오` 배치는 이전 불량을 유지한다.
 - **실적 재업로드:** 기존 기간 전체 삭제·교체가 아니라 `lib/excel/import.ts`의 `createMany({skipDuplicates:true})`로 기존 행을 건너뛴다.
 - **배포·데이터 검증 범위:** 소스 코드 확인 기준이며 운영 DB의 실제 데이터 및 배포 환경변수 설정까지 검증한 것은 아니다.
@@ -79,8 +83,8 @@
 | 테이블 | 컬럼 | 비고 |
 | --- | --- | --- |
 | `Product` | code (PK), name, capacity(예: "2L"), unitsPerBox, boxW, boxD, boxH (mm), volumeM3 (계산), isActive | 제품 마스터. 엑셀로 일괄 등록 |
-| `StockSnapshot` | id, productCode, qtyBox, uploadedAt, stockAsOf, uploadedBy, batchId | 업로드 1회 = batchId 1개. 같은 날 재업로드 시 새 batch가 기준점, 이전 batch는 보관 |
-| `UploadBatch` | id, kind, fileName, fileHash, rowCount, uploadedAt, uploadedBy, stockAsOf, defectApplied, mode (REPLACE/MERGE), revertedAt | 업로드 1회. fileHash로 같은 파일 재업로드 차단. 복구된 배치는 기준에서 제외 |
+| `StockSnapshot` | id, productCode, qtyBox, uploadedAt, stockAsOf, uploadedBy, batchId, carried | 업로드 1회 = batchId 1개. 같은 날 재업로드 시 새 batch가 기준점, 이전 batch는 보관. stockAsOf·uploadedAt은 품목별(일부 갱신 이월 행은 원래 값, carried=true) |
+| `UploadBatch` | id, kind, fileName, fileHash, rowCount, uploadedAt, uploadedBy, stockAsOf, defectApplied, mode (REPLACE/MERGE), revertedAt | 업로드 1회. fileHash로 같은 파일 재업로드 차단(재고는 파일+집계 시각·불량 반영·모드가 같을 때만). 복구된 배치는 기준에서 제외 |
 | `StockAdjustment` | id, productCode, qtyBox, reason (DEFECT / SHIPMENT / ORDER / OTHER), memo, createdBy, createdAt, cancelledAt, orderId, requestId, correctsId, correctionReason | 취소는 삭제가 아니라 cancelledAt 기록 |
 | `ProductionHistory` | id, productCode, date, qtyGood, qtyDefect | ERP 생산실적 엑셀 |
 | `ShipmentHistory` | id, productCode, date, customerCode, qtyBox | ERP 출고실적 엑셀 |

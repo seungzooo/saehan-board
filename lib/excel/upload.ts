@@ -71,8 +71,22 @@ export async function processUpload(
   db: PrismaClient = prisma,
 ): Promise<UploadResponse> {
   const t0 = Date.now();
-  const fileHash = sha256(bytes);
-  const dup = await db.uploadBatch.findUnique({ where: { fileHash } });
+  const isStockKind = kind === "STOCK";
+  const fileHash = isStockKind ? stockUploadKey(bytes, options) : sha256(bytes);
+  const dup =
+    (await db.uploadBatch.findUnique({ where: { fileHash } })) ??
+    // 이전 방식(파일 내용만)으로 저장된 재고 배치 — 설정까지 같으면 같은 업로드로 본다
+    (isStockKind
+      ? await db.uploadBatch.findFirst({
+          where: {
+            fileHash: sha256(bytes),
+            revertedAt: null,
+            stockAsOf: options.stockAsOf ?? null,
+            defectApplied: !!options.defectApplied,
+            mode: options.mode === "MERGE" ? "MERGE" : "REPLACE",
+          },
+        })
+      : null);
   if (dup && !dup.revertedAt) {
     return { status: "duplicate", batchId: dup.id, uploadedAt: dup.uploadedAt.toISOString(), fileName: dup.fileName };
   }
@@ -165,6 +179,17 @@ export async function processUpload(
   }
 }
 
+/**
+ * 재고 업로드의 중복 판정 키 = 파일 내용 + 집계 시각 + 사후 불량 반영 여부 + 모드.
+ * 같은 파일을 같은 설정으로 두 번 저장(연타·재전송)하면 한 건만 남고,
+ * 같은 파일을 "불량 반영됨"으로 바꾸거나 집계 시각을 고쳐 다시 반영하는 것은 새 기준으로 받는다.
+ * 앞부분이 파일 해시라 미리보기에서 "이미 올린 파일"을 찾을 수 있다.
+ */
+export function stockUploadKey(bytes: Uint8Array, options: Pick<UploadOptions, "stockAsOf" | "defectApplied" | "mode">): string {
+  const settings = [options.stockAsOf ? options.stockAsOf.toISOString() : "-", options.defectApplied ? "1" : "0", options.mode === "MERGE" ? "MERGE" : "REPLACE"].join("|");
+  return `${sha256(bytes)}:${createHash("sha256").update(settings).digest("hex").slice(0, 16)}`;
+}
+
 async function latestStockBatch(db: PrismaClient) {
   return db.uploadBatch.findFirst({ where: { kind: "STOCK", revertedAt: null }, orderBy: { uploadedAt: "desc" } });
 }
@@ -188,7 +213,8 @@ export type StockPreview =
       changedSample: { code: string; name: string; before: number; after: number }[];
       errors: RowError[];
       errorCount: number;
-      duplicate: { batchId: string; uploadedAt: string; fileName: string } | null;
+      /** 같은 내용의 파일을 이미 반영한 배치 — 같은 설정이면 저장해도 새로 만들지 않고, 불량 반영·집계 시각을 바꾸면 새 기준이 된다 */
+      duplicate: { batchId: string; uploadedAt: string; fileName: string; stockAsOf: string | null; defectApplied: boolean } | null;
       previousBatch: { id: string; fileName: string; uploadedAt: string; products: number } | null;
     }
   | { status: "mapping-error"; missing: string[]; headerFound: string[]; format: string }
@@ -259,7 +285,11 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
     } else same++;
   }
   const missingList = [...prevMap.entries()].filter(([code]) => !qty.has(code));
-  const dup = await db.uploadBatch.findUnique({ where: { fileHash: sha256(bytes) } });
+  // 같은 파일을 이미 반영한 배치(설정 무관, 가장 최근) — 저장은 막지 않고 안내만
+  const dup = await db.uploadBatch.findFirst({
+    where: { kind: "STOCK", revertedAt: null, fileHash: { startsWith: sha256(bytes) } },
+    orderBy: { uploadedAt: "desc" },
+  });
 
   return {
     status: "ok",
@@ -274,7 +304,9 @@ export async function previewStock(bytes: Uint8Array, db: PrismaClient = prisma)
     changedSample,
     errors,
     errorCount: errors.length,
-    duplicate: dup && !dup.revertedAt ? { batchId: dup.id, uploadedAt: dup.uploadedAt.toISOString(), fileName: dup.fileName } : null,
+    duplicate: dup
+      ? { batchId: dup.id, uploadedAt: dup.uploadedAt.toISOString(), fileName: dup.fileName, stockAsOf: dup.stockAsOf?.toISOString() ?? null, defectApplied: dup.defectApplied }
+      : null,
     previousBatch: prev
       ? { id: prev.id, fileName: prev.fileName, uploadedAt: prev.uploadedAt.toISOString(), products: prevSnaps.length }
       : null,

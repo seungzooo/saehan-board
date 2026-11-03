@@ -61,6 +61,9 @@ export default async function ProductDetailPage({
           {availableText(stock)}
           {!needsCheck && <span className="ml-1 text-xl font-normal text-zinc-500">박스</span>}
         </p>
+        <p data-testid="allocation-note" className="mt-1 text-xs text-zinc-500">
+          다른 거래처 배정분 반영 여부는 생산지원팀 확인
+        </p>
         {needsCheck ? (
           <p className="mt-1 text-sm text-zinc-600">최근 재고 파일에 이 품목이 없습니다. 재고 담당자가 다음 파일에 포함시키면 수량이 표시됩니다.</p>
         ) : (

@@ -13,6 +13,16 @@ import { processUpload } from "@/lib/excel/upload";
 type Batch = { id: string; kind: string; fileName: string; fileHash: string; uploadedAt: Date; stockAsOf: Date | null; defectApplied: boolean };
 type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: Date | null; uploadedAt: Date };
 
+/** 가짜 findFirst의 where 해석: 값 비교, fileHash.startsWith, 날짜 비교 */
+function matches(row: Record<string, unknown>, where: Record<string, unknown> = {}) {
+  return Object.entries(where).every(([k, v]) => {
+    const x = row[k];
+    if (v && typeof v === "object" && "startsWith" in (v as object)) return typeof x === "string" && x.startsWith((v as { startsWith: string }).startsWith);
+    if (v instanceof Date || x instanceof Date) return (x as Date | null)?.getTime?.() === (v as Date | null)?.getTime?.() || (x == null && v == null);
+    return (x ?? null) === (v ?? null);
+  });
+}
+
 function makeFakeDb() {
   // 제품 마스터에 있는 품번만 재고 파일에서 받아들인다 (없으면 "품번 불일치")
   const state = { batches: [] as Batch[], snapshots: [] as Snap[], products: new Set<string>(["TM00329", "EM00001", "FM00010"]) };
@@ -20,6 +30,8 @@ function makeFakeDb() {
   const client = (s: typeof state) => ({
     uploadBatch: {
       findUnique: async ({ where }: { where: { fileHash: string } }) => s.batches.find((b) => b.fileHash === where.fileHash) ?? null,
+      findFirst: async ({ where }: { where?: Record<string, unknown> } = {}) =>
+        [...s.batches].reverse().find((b) => matches({ revertedAt: null, mode: "REPLACE", ...b } as Record<string, unknown>, where)) ?? null,
       create: async ({ data }: { data: Omit<Batch, "id"> & { rowCount: number; uploadedBy: string } }) => {
         const b = { id: `b${++seq}`, ...data };
         s.batches.push(b);
@@ -138,9 +150,15 @@ describe("잘못된 재고 파일 → 직전 기준 유지", () => {
     expect(snaps.map((s) => [s.productCode, s.qtyBox])).toEqual([["EM00001", 15]]); // TM00329는 130(합산)으로 들어가지 않는다
   });
 
-  it("같은 파일은 다시 저장하지 않는다", async () => {
-    const r = await processUpload("STOCK", "good-again.xls", cp949(GOOD), "t", {}, fake.db);
+  it("같은 파일·같은 설정(집계 시각·불량 반영·모드)은 다시 저장하지 않는다", async () => {
+    const r = await processUpload("STOCK", "good-again.xls", cp949(GOOD), "t", { stockAsOf: asOf, defectApplied: true }, fake.db);
     expect(r.status).toBe("duplicate");
     expect(fake.state.batches).toHaveLength(1);
+  });
+
+  it("같은 파일이라도 불량 반영 선택이 다르면 새 기준으로 받는다", async () => {
+    const r = await processUpload("STOCK", "good-again.xls", cp949(GOOD), "t", { stockAsOf: asOf, defectApplied: false }, fake.db);
+    expect(r.status).toBe("saved");
+    expect(fake.state.batches).toHaveLength(2);
   });
 });

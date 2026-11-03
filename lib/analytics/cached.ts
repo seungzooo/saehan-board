@@ -11,7 +11,8 @@ import { getAnalysisBasis, getOverview, getProductAnalysisStatic } from "./query
 import { getCompletionInfo, getMonthlyUnitsData, getPeriodData } from "./shipments";
 
 export const DATA_TAG = "sales-production-data";
-const CACHE_VERSION = "v1";
+// 스키마(DATABASE_SCHEMA)도 키에 넣는다 — 시연·e2e용 분리 스키마의 값이 운영 캐시와 섞이지 않게
+const CACHE_VERSION = `v1:${process.env.DATABASE_SCHEMA || "public"}`;
 const opts = { tags: [DATA_TAG], revalidate: false as const };
 
 export const cachedPeriodData = unstable_cache(getPeriodData, [CACHE_VERSION, "period-data"], opts);

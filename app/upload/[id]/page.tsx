@@ -37,7 +37,7 @@ async function UploadDetailPageInner({ params, searchParams }: { params: Promise
         </p>
         {d.kind === "STOCK" && (
           <p className="text-sm text-zinc-600">
-            {basisText({ uploadedAt: b.uploadedAt, stockAsOf: b.stockAsOf }, true)} · {b.mode === "MERGE" ? "있는 품목만 갱신" : "전체 교체"} · 사후 불량{" "}
+            {basisText({ uploadedAt: b.uploadedAt, stockAsOf: b.stockAsOf }, true)} · {b.mode === "MERGE" ? "일부 갱신" : "전체 교체"} · 사후 불량{" "}
             {b.defectApplied ? "반영됨(이전 불량 리셋)" : "미반영"}
           </p>
         )}

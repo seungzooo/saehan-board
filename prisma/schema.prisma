@@ -62,9 +62,11 @@ model StockSnapshot {
   productCode String
   qtyBox      Int
   uploadedAt  DateTime  @default(now()) // 반영 시각
-  stockAsOf   DateTime? // 집계 기준 시각 (batch와 동일 값, 조회 편의)
+  stockAsOf   DateTime? // 품목별 집계 기준 시각. 파일에 있던 품목 = 그 배치 값, 일부 갱신(MERGE)으로 이월된 품목 = 원래 값 유지
   uploadedBy  String
   batchId     String
+  /// 일부 갱신(MERGE)에서 파일에 없어 직전 배치에서 수량·집계 시각·반영 시각을 그대로 옮겨 온 행
+  carried     Boolean   @default(false)
 
   product Product     @relation(fields: [productCode], references: [code])
   batch   UploadBatch @relation(fields: [batchId], references: [id])

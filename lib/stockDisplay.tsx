@@ -72,6 +72,11 @@ export function BasisLine({ basis, long = false, className = "" }: { basis: Stoc
     <p className={`text-xs text-zinc-600 ${className}`}>
       <span>{basisText(basis, long)}</span>
       <StaleBadge uploadedAt={basis.uploadedAt} />
+      {basis.partial && (
+        <span data-testid="basis-partial" className="ml-1 text-zinc-500">
+          · 일부 갱신 파일 — 파일에 없던 품목은 이전 수량·집계 시각 유지 (품목마다 표시)
+        </span>
+      )}
     </p>
   );
 }

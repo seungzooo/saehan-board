@@ -12,7 +12,12 @@ test.describe("PIN 보호 (시크릿 상태)", () => {
     test(`${path}: PIN 없이 열면 PIN 입력을 요구하고 본문은 보이지 않는다`, async ({ page }) => {
       await page.goto(path);
       await expect(page.getByTestId("pin-form")).toBeVisible();
-      await expect(page.getByLabel("PIN")).toBeVisible();
+      await expect(page.getByLabel("관리 코드")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "관리자 확인" })).toBeVisible();
+      await expect(page.getByTestId("pin-desc")).toHaveText("재고 업로드와 변동 입력은 생산지원팀만 할 수 있습니다. 관리 코드를 입력하세요.");
+      // 내부 용어 노출 금지
+      const text = await page.locator("main").innerText();
+      for (const word of ["PIN", "UPLOAD_PIN", "공용", "환경변수"]) expect(text, word).not.toContain(word);
       if (path === "/upload") await expect(page.getByRole("tab", { name: "재고" })).toHaveCount(0);
       else await expect(page.getByPlaceholder("품목명 또는 품번")).toHaveCount(0);
     });
@@ -28,11 +33,11 @@ test.describe("PIN 보호 (시크릿 상태)", () => {
   test("틀린 PIN은 거부, 맞는 PIN이면 열리고 다른 보호 화면도 열린다", async ({ page }) => {
     test.skip(!PIN, "UPLOAD_PIN이 설정되지 않음");
     await page.goto("/upload");
-    await page.getByLabel("PIN").fill("000000" === PIN ? "111111" : "000000");
+    await page.getByLabel("관리 코드").fill("000000" === PIN ? "111111" : "000000");
     await page.getByRole("button", { name: "확인" }).click();
-    await expect(page.getByTestId("pin-form").getByRole("alert")).toContainText("PIN이 맞지 않습니다");
+    await expect(page.getByTestId("pin-form").getByRole("alert")).toContainText("관리 코드가 맞지 않습니다");
 
-    await page.getByLabel("PIN").fill(PIN);
+    await page.getByLabel("관리 코드").fill(PIN);
     await page.getByRole("button", { name: "확인" }).click();
     await expect(page.getByRole("tab", { name: "재고" })).toBeVisible();
 
@@ -45,7 +50,7 @@ test.describe("PIN 보호 (시크릿 상태)", () => {
 test("같은 품번 두 줄 재고 파일 → 미리보기에 '중복 품번 1개' (저장하지 않음)", async ({ page }) => {
   test.skip(!PIN, "UPLOAD_PIN이 설정되지 않음");
   await page.goto("/upload");
-  await page.getByLabel("PIN").fill(PIN);
+  await page.getByLabel("관리 코드").fill(PIN);
   await page.getByRole("button", { name: "확인" }).click();
   await expect(page.getByRole("tab", { name: "재고" })).toBeVisible();
 

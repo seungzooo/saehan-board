@@ -5,6 +5,8 @@ import iconv from "iconv-lite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import { previewStock, processUpload, revertLatestStock } from "@/lib/excel/upload";
+import { computeAvailableStock } from "@/lib/availableStock";
+import { basisText } from "@/lib/stockDisplay";
 
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
@@ -19,7 +21,17 @@ type Batch = {
   mode: string;
   revertedAt: Date | null;
 };
-type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: Date | null; uploadedAt: Date };
+type Snap = { productCode: string; qtyBox: number; batchId: string; stockAsOf: Date | null; uploadedAt: Date; carried?: boolean };
+
+/** 가짜 findFirst의 where 해석: 값 비교, fileHash.startsWith, 날짜 비교 */
+function matches(row: Record<string, unknown>, where: Record<string, unknown> = {}) {
+  return Object.entries(where).every(([k, v]) => {
+    const x = row[k];
+    if (v && typeof v === "object" && "startsWith" in (v as object)) return typeof x === "string" && x.startsWith((v as { startsWith: string }).startsWith);
+    if (v instanceof Date || x instanceof Date) return (x as Date | null)?.getTime?.() === (v as Date | null)?.getTime?.() || (x == null && v == null);
+    return (x ?? null) === (v ?? null);
+  });
+}
 
 function makeFakeDb(productNames: Record<string, string>) {
   const state = { batches: [] as Batch[], snapshots: [] as Snap[] };
@@ -33,7 +45,12 @@ function makeFakeDb(productNames: Record<string, string>) {
   const client = (s: typeof state) => ({
     uploadBatch: {
       findUnique: async ({ where }: { where: { fileHash: string } }) => s.batches.find((b) => b.fileHash === where.fileHash) ?? null,
-      findFirst: async () => latest(s),
+      // where가 kind·revertedAt만이면 최신 배치(latestStockBatch), 그 밖의 조건은 그대로 걸러서 최신 것
+      findFirst: async ({ where }: { where?: Record<string, unknown> } = {}) => {
+        const rows = s.batches.filter((b) => matches(b as unknown as Record<string, unknown>, where));
+        const l = latest({ ...s, batches: rows });
+        return l ?? (rows.length ? rows[rows.length - 1] : null);
+      },
       create: async ({ data }: { data: Omit<Batch, "id" | "revertedAt"> }) => {
         const b: Batch = { id: `b${++seq}`, revertedAt: null, ...data };
         s.batches.push(b);
@@ -154,5 +171,74 @@ describe("재고 업로드 미리보기 / MERGE / 복구", () => {
     expect(p.errors.filter((e) => e.kind === "DUP").map((e) => e.row)).toEqual([2, 4]);
     expect(p.fileProducts).toBe(1); // B만 정상
     expect(p.missing).toBe(2); // 기존 A·C가 이번 파일 정상 행에 없음 → 확인 필요
+  });
+});
+
+describe("일부 갱신: 파일에 없는 품목은 이전 수량과 이전 집계 시각 유지", () => {
+  const kst = (s: string) => new Date(`${s}+09:00`);
+  it("11-03 09:00 전체 파일(A·B) → 11-04 10:00 일부 갱신(A만) → A는 11-04 10:00, B는 11-03 09:00 기준", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeDb({ A: "에이", B: "비" });
+      vi.setSystemTime(kst("2026-11-03T09:03:00"));
+      const full = await processUpload("STOCK", "full.xls", cp949("품번\t재고수량\r\nA\t100\r\nB\t50\r\n"), "t", { stockAsOf: kst("2026-11-03T09:00:00") }, fake.db);
+      expect(full.status).toBe("saved");
+      vi.setSystemTime(kst("2026-11-04T10:05:00"));
+      const part = await processUpload("STOCK", "partA.xls", cp949("품번\t재고수량\r\nA\t80\r\n"), "t", { stockAsOf: kst("2026-11-04T10:00:00"), mode: "MERGE" }, fake.db);
+      expect(part.status).toBe("saved");
+
+      const b = fake.latest()!;
+      expect(b.fileName).toBe("partA.xls");
+      const snap = (code: string) => fake.state.snapshots.find((x) => x.batchId === b.id && x.productCode === code)!;
+      expect(snap("A")).toMatchObject({ qtyBox: 80, carried: false });
+      expect(snap("B")).toMatchObject({ qtyBox: 50, carried: true });
+      expect(snap("A").stockAsOf).toEqual(kst("2026-11-04T10:00:00"));
+      expect(snap("B").stockAsOf).toEqual(kst("2026-11-03T09:00:00"));
+      expect(snap("B").uploadedAt).toEqual(kst("2026-11-03T09:03:00")); // 반영 시각도 원래 값
+
+      // 화면 문구 (상세 = long)
+      expect(basisText(snap("A"), true)).toBe("재고 집계 기준 2026-11-03 10:00 · 파일 반영 2026-11-03 10:05".replace(/11-03/g, "11-04"));
+      expect(basisText(snap("B"), true)).toBe("재고 집계 기준 2026-11-03 09:00 · 파일 반영 2026-11-03 09:03");
+      expect(basisText(snap("B"))).toBe("재고 집계 기준 11-03 09:00 · 파일 반영 11-03 09:03");
+
+      // B는 11-03 09:00 이후 입력한 출고가 계속 차감된다 (새 파일이 B를 다시 세지 않았으므로)
+      const adj = [{ qtyBox: 5, reason: "SHIPMENT", createdAt: kst("2026-11-03T15:00:00"), cancelledAt: null }];
+      expect(computeAvailableStock(snap("B"), adj).available).toBe(45);
+      expect(computeAvailableStock(snap("A"), adj).available).toBe(80); // A는 10:00 파일이 반영
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("시연: 재고 90(집계 09:00) → 09:05 불량 5 → 09:12 같은 파일을 '불량 반영됨'으로 다시 반영", () => {
+  const kst = (s: string) => new Date(`${s}+09:00`);
+  it("같은 파일도 불량 반영 선택이 다르면 새 기준이 되고, 결과는 85박스 · 집계 09:00", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeDb({ A: "에이" });
+      const file = cp949("품번\t재고수량\r\nA\t90\r\n");
+      const asOf = kst("2026-11-03T09:00:00");
+      vi.setSystemTime(kst("2026-11-03T09:01:00"));
+      expect((await processUpload("STOCK", "stock.xls", file, "t", { stockAsOf: asOf }, fake.db)).status).toBe("saved");
+      const defect = { qtyBox: 5, reason: "DEFECT", createdAt: kst("2026-11-03T09:05:00"), cancelledAt: null };
+
+      vi.setSystemTime(kst("2026-11-03T09:12:00"));
+      const p = await previewStock(file, fake.db);
+      expect(p.status === "ok" && p.duplicate?.defectApplied).toBe(false); // 같은 파일 안내, 저장은 막지 않음
+      const again = await processUpload("STOCK", "stock.xls", file, "t", { stockAsOf: asOf, defectApplied: true }, fake.db);
+      expect(again.status).toBe("saved");
+      const b = fake.latest()!;
+      expect(b.defectApplied).toBe(true);
+      const snap = fake.state.snapshots.find((x) => x.batchId === b.id)!;
+      // 불량 리셋 시점 = 이 파일의 집계 시각 09:00 → 09:05 불량은 파일에 없으므로 계속 차감
+      const s = computeAvailableStock({ ...snap, defectResetAt: asOf }, [defect]);
+      expect(s.available).toBe(85);
+      expect(basisText(s as { uploadedAt: Date; stockAsOf: Date | null })).toBe("재고 집계 기준 11-03 09:00 · 파일 반영 11-03 09:12");
+      // 같은 설정으로 한 번 더 → 중복
+      expect((await processUpload("STOCK", "stock.xls", file, "t", { stockAsOf: asOf, defectApplied: true }, fake.db)).status).toBe("duplicate");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

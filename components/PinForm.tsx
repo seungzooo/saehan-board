@@ -23,7 +23,7 @@ export default function PinForm() {
       className="flex flex-col gap-3 rounded-lg border border-zinc-200 p-4"
     >
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-zinc-700">재고 담당자 공용 PIN</span>
+        <span className="text-zinc-700">관리 코드</span>
         <input
           name="pin"
           type="password"
@@ -31,7 +31,7 @@ export default function PinForm() {
           autoComplete="current-password"
           autoFocus
           required
-          aria-label="PIN"
+          aria-label="관리 코드"
           className="num h-14 rounded-lg border border-zinc-300 px-4 text-2xl tracking-widest outline-none focus:border-blue-600"
         />
       </label>

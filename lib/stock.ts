@@ -3,7 +3,7 @@
  */
 import { ANALYSIS_SALES_TYPE, ANALYSIS_SHIP_TYPE } from "@/config/excel-mapping";
 import { SHIPMENT_WINDOW_DAYS } from "@/config/stock";
-import { computeAvailableStock, cutoffOf, type AvailableStock } from "@/lib/availableStock";
+import { computeAvailableStock, type AvailableStock } from "@/lib/availableStock";
 import { prisma } from "@/lib/db";
 import { capacityQueryVariants, rankProducts } from "@/lib/search";
 
@@ -29,23 +29,30 @@ export async function getLatestStockBatch() {
 }
 
 /**
- * 불량 차감 리셋 시점: 가장 최근 "사후 불량 반영됨"(defectApplied) 재고 배치의 반영 시각.
- * 없으면 null (불량은 전부 누적).
+ * 품목별 불량 차감 리셋 시점: 그 품목이 **파일에 실제로 들어 있던**(이월 아님) "사후 불량 반영됨"(defectApplied) 재고 배치 중
+ * 가장 늦은 기준 시각(집계 시각, 없으면 반영 시각). 없으면 그 품목의 불량은 전부 누적.
+ * 일부 갱신 파일에 없던 품목은 그 파일이 불량을 반영했다고 볼 수 없으므로 리셋하지 않는다.
  */
-export async function getDefectResetAt(): Promise<Date | null> {
-  const b = await prisma.uploadBatch.findFirst({
-    where: { kind: "STOCK", defectApplied: true, revertedAt: null },
-    orderBy: { uploadedAt: "desc" },
-    select: { uploadedAt: true, stockAsOf: true },
+export async function getDefectResetAt(codes: string[]): Promise<Map<string, Date>> {
+  const map = new Map<string, Date>();
+  if (codes.length === 0) return map;
+  const rows = await prisma.stockSnapshot.findMany({
+    where: { productCode: { in: codes }, carried: false, batch: { kind: "STOCK", defectApplied: true, revertedAt: null } },
+    select: { productCode: true, stockAsOf: true, uploadedAt: true },
   });
-  return b ? cutoffOf(b) : null;
+  for (const r of rows) {
+    const at = r.stockAsOf ?? r.uploadedAt;
+    const cur = map.get(r.productCode);
+    if (!cur || at > cur) map.set(r.productCode, at);
+  }
+  return map;
 }
 
 /** 재고 기준 정보 (화면 헤더·홈 타일 공용) */
-export type StockBasis = { uploadedAt: Date; stockAsOf: Date | null; batchId: string } | null;
+export type StockBasis = { uploadedAt: Date; stockAsOf: Date | null; batchId: string; partial?: boolean } | null;
 export async function getStockBasis(): Promise<StockBasis> {
   const b = await getLatestStockBatch();
-  return b ? { uploadedAt: b.uploadedAt, stockAsOf: b.stockAsOf, batchId: b.id } : null;
+  return b ? { uploadedAt: b.uploadedAt, stockAsOf: b.stockAsOf, batchId: b.id, partial: b.mode === "MERGE" } : null;
 }
 
 /**
@@ -147,14 +154,14 @@ export async function computeForProducts(codes: string[]): Promise<Map<string, A
     batch
       ? prisma.stockSnapshot.findMany({
           where: { batchId: batch.id, productCode: { in: codes } },
-          select: { productCode: true, qtyBox: true, uploadedAt: true },
+          select: { productCode: true, qtyBox: true, uploadedAt: true, stockAsOf: true },
         })
       : Promise.resolve([]),
     prisma.stockAdjustment.findMany({
       where: { productCode: { in: codes } },
       select: { id: true, productCode: true, qtyBox: true, reason: true, createdAt: true, cancelledAt: true, orderId: true },
     }),
-    getDefectResetAt(),
+    getDefectResetAt(codes),
   ]);
   const snapByCode = new Map(snapshots.map((s) => [s.productCode, s]));
   const adjByCode = new Map<string, typeof adjustments>();
@@ -168,7 +175,8 @@ export async function computeForProducts(codes: string[]): Promise<Map<string, A
     result.set(
       code,
       computeAvailableStock(
-        snap ? { qtyBox: snap.qtyBox, uploadedAt: snap.uploadedAt, stockAsOf: batch?.stockAsOf ?? null, defectResetAt } : null,
+        // 품목별 집계·반영 시각 (일부 갱신으로 이월된 품목은 원래 시각)
+        snap ? { qtyBox: snap.qtyBox, uploadedAt: snap.uploadedAt, stockAsOf: snap.stockAsOf, defectResetAt: defectResetAt.get(code) ?? null } : null,
         adjByCode.get(code) ?? [],
       ),
     );

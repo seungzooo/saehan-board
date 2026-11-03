@@ -33,7 +33,7 @@ export default function StockCard({ row, q }: { row: StockRow; q?: string }) {
             "최근 재고 파일에 없음"
           ) : (
             <>
-              집계 {s.stockAsOf ? formatShort(s.stockAsOf) : "미확인"}
+              <span data-testid="card-asof">집계 {s.stockAsOf ? formatShort(s.stockAsOf) : "미확인"}</span>
               <br />
               소진 {daysText(row.days)}
             </>

@@ -51,8 +51,8 @@ export async function pinState(): Promise<PinState> {
 /** 서버 액션 첫 줄에서 호출. 통과 못 하면 사용자에게 보여줄 메시지 */
 export async function requirePin(): Promise<string | null> {
   const s = await pinState();
-  if (s === "UNSET") return "관리자 PIN 미설정 — 관리자에게 UPLOAD_PIN 설정을 요청하세요.";
-  if (s === "LOCKED") return "PIN 확인이 필요합니다. 화면을 새로고침해 PIN을 입력하세요.";
+  if (s === "UNSET") return "관리 코드가 아직 정해지지 않았습니다. 생산지원팀에 문의하세요.";
+  if (s === "LOCKED") return "관리자 확인이 필요합니다. 화면을 새로고침해 관리 코드를 입력하세요.";
   return null;
 }
 
