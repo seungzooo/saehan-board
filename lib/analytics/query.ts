@@ -192,8 +192,8 @@ export async function getProductAnalysisStatic(code: string, seg: Segment = "ALL
   // 시차 상관: 생산·출고 자료 범위의 합집합 달력, 각자 범위 밖은 null
   const um = unionMonths(basis.productionCoverage, basis.salesCoverage);
   const lags = lagCorrelationsCalendar(
-    coveredSeries(um, prodMap, basis.productionCoverage),
-    coveredSeries(um, shipMap, basis.salesCoverage),
+    coveredSeries(um, seg === "ALL" ? prodUnits : prodMap, basis.productionCoverage),
+    coveredSeries(um, seg === "ALL" ? units.normal : shipMap, basis.salesCoverage),
     MAX_LAG,
   );
 
@@ -252,10 +252,19 @@ export async function getOverview(seg: Segment) {
     if (!m) byProduct.set(r.productCode, (m = new Map()));
     m.set(r.yearMonth, v);
     if (!codes.has(r.productCode)) continue;
-    interShip.set(r.yearMonth, (interShip.get(r.yearMonth) ?? 0) + v);
-    interProd.set(r.yearMonth, (interProd.get(r.yearMonth) ?? 0) + r.qtyProducedBox);
+    if (seg !== "ALL") interShip.set(r.yearMonth, (interShip.get(r.yearMonth) ?? 0) + v);
+    const produced = seg === "ALL" ? r.qtyProduced : r.qtyProducedBox;
+    interProd.set(r.yearMonth, (interProd.get(r.yearMonth) ?? 0) + produced);
   }
   const um = unionMonths(basis.productionCoverage, basis.salesCoverage);
+  if (seg === "ALL") {
+    const shipments = await prisma.shipmentHistory.groupBy({
+      by: ["yearMonth"],
+      where: { productCode: { in: [...codes] }, shipType: "정상" },
+      _sum: { qtyUnits: true },
+    });
+    for (const row of shipments) interShip.set(row.yearMonth, row._sum.qtyUnits ?? 0);
+  }
   const totalLags = lagCorrelationsCalendar(
     coveredSeries(um, interProd, basis.productionCoverage),
     coveredSeries(um, interShip, basis.salesCoverage),
