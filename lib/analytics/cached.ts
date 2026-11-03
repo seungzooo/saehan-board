@@ -18,8 +18,8 @@ export const cachedPeriodData = unstable_cache(getPeriodData, [CACHE_VERSION, "p
 export const cachedCompletionInfo = unstable_cache(getCompletionInfo, [CACHE_VERSION, "completion-info"], opts);
 export const cachedMonthlyUnits = unstable_cache(async (code: string | null) => getMonthlyUnitsData(code ?? undefined), [CACHE_VERSION, "monthly-units"], opts);
 export const cachedAnalysisBasis = unstable_cache(getAnalysisBasis, [CACHE_VERSION, "analysis-basis"], opts);
-export const cachedOverview = unstable_cache(async () => getOverview("ALL"), [CACHE_VERSION, "overview"], opts);
-export const cachedProductAnalysis = unstable_cache(async (code: string) => getProductAnalysisStatic(code, "ALL"), [CACHE_VERSION, "product-analysis"], opts);
+export const cachedOverview = unstable_cache(async () => getOverview("ALL"), [CACHE_VERSION, "overview-unit-lags-v2"], opts);
+export const cachedProductAnalysis = unstable_cache(async (code: string) => getProductAnalysisStatic(code, "ALL"), [CACHE_VERSION, "product-analysis-unit-lags-v2"], opts);
 
 // 관리 대상 판정(최근 12개 달 정상·내수 출고)도 출고실적에서만 나온다
 export const cachedActivityBasis = unstable_cache(getActivityBasis, [CACHE_VERSION, "activity-basis"], opts);
