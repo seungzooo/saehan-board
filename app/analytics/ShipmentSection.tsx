@@ -2,7 +2,7 @@
 
 import PickChart from "@/components/PickChart";
 import { COLOR_SHIPMENT } from "@/components/charts";
-import { monthView } from "@/lib/analytics/explain";
+import { monthView, yearlyTotalsView } from "@/lib/analytics/explain";
 import {
   allSeries,
   buildContext,
@@ -112,6 +112,12 @@ export default function ShipmentSection({
     [view.points, normal, boxSize, year, item, ctx],
   );
 
+  // [전체 기간]에만: 연도별 정상 출고 합계 + 전년 대비 증가율 (연도 버튼·전년 동기간 비교는 그대로)
+  const yearly = useMemo(
+    () => (year === "all" ? yearlyTotalsView(years, normal, (ym) => monthStatus(ym, ctx) === "ok", boxSize) : null),
+    [year, years, normal, ctx, boxSize],
+  );
+
   const lines = describeComparison(view.comparison, boxSize);
   const c = view.comparison;
 
@@ -193,6 +199,14 @@ export default function ShipmentSection({
           </p>
         )}
       </div>
+      {yearly && (
+        <div className="flex flex-col gap-1" data-testid="yearly-totals">
+          <h3 className="text-sm font-semibold text-zinc-800">연도별 정상 출고 합계와 전년 대비 증가율</h3>
+          <p className="text-xs text-zinc-500">{unitNote} · 집계 완료된 달만 합산 · 가로축 연도 옆 % = 전년 대비</p>
+          <PickChart testid="yearly-chart" {...yearly} series={[{ name: "연 합계", color: COLOR_SHIPMENT, kind: "bar" }]} yUnit={unit} height={200} />
+        </div>
+      )}
+
     </section>
   );
 }

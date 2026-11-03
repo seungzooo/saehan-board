@@ -127,3 +127,97 @@ export function seasonAvgView(rows: { month: number; index: number | null; avg: 
     } satisfies PickTable,
   };
 }
+
+/**
+ * 연도별 정상 출고 합계 + 전년 대비 증가율. 집계 완료된 달만 더한다.
+ * 그 해가 일부 달만 완료면(예: 1~3월) 전년도 같은 달끼리 비교하고 "1~3월 동기간"이라고 밝힌다. 전년 합 0이면 산정 불가.
+ */
+export function yearlyTotalsView(years: number[], normal: Map<string, number>, isComplete: (ym: string) => boolean, boxSize: number | null) {
+  const monthsOf = (y: number) => Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, "0")}`).filter(isComplete);
+  const sum = (ms: string[]) => ms.reduce((s, ym) => s + (normal.get(ym) ?? 0), 0);
+  const rows = years.map((y) => {
+    const ms = monthsOf(y);
+    const total = sum(ms);
+    const prevMs = ms.map((ym) => `${y - 1}${ym.slice(4)}`);
+    const prevOk = ms.length > 0 && prevMs.every(isComplete);
+    const prev = prevOk ? sum(prevMs) : null;
+    const [m0, m1] = ms.length ? [Number(ms[0].slice(5)), Number(ms.at(-1)!.slice(5))] : [0, 0];
+    const span = ms.length === 12 ? "1~12월" : ms.length ? (m0 === m1 ? `${m0}월` : `${m0}~${m1}월`) : "집계 완료된 달 없음";
+    const yoy = prev === null ? null : prev === 0 ? "산정 불가" : pct((total / prev - 1) * 100);
+    return { y, ms, total, prev, span, yoy };
+  });
+  const yoyLabel = (r: (typeof rows)[number]) => (r.yoy === null ? "" : r.yoy === "산정 불가" ? "" : ` ${r.yoy}`);
+  return {
+    points: rows.map((r): PickPoint => ({
+      label: `${r.y}${yoyLabel(r)}`,
+      values: [r.ms.length ? (boxSize ? r.total / boxSize : r.total) : null],
+      detail: {
+        title: `${r.y}년 (${r.span})`,
+        lines: [
+          r.ms.length ? `정상 출고 합계 ${formatUnits(r.total, boxSize)}` : "집계 완료된 달이 없어 합계를 내지 않습니다",
+          r.prev === null
+            ? "전년 비교 자료 없음"
+            : r.yoy === "산정 불가"
+              ? `전년 같은 기간 0 → 증가율 산정 불가`
+              : `전년 ${r.ms.length === 12 ? "" : `${r.span} 동기간 `}${formatUnits(r.prev, boxSize)} 대비 ${r.yoy}`,
+        ],
+      },
+    })),
+    table: {
+      headers: ["연도", "정상 출고 합계", "집계 기간", "전년 대비"],
+      rows: rows.map((r) => [`${r.y}년`, r.ms.length ? formatUnits(r.total, boxSize) : "—", r.span, r.yoy ?? "—"]),
+    } satisfies PickTable,
+  };
+}
+
+/** 히트맵 셀: 반올림 전 지수로 낸 그해 월평균 대비 차이. 실제 0·자료 없음·기준값 0을 구분 */
+export type HeatKind = "ok" | "zero" | "nodata" | "base0";
+export function heatPct(index: number): string {
+  return pct((index - 1) * 100);
+}
+export function heatCell(year: number, month: number, value: number | null, mean: number | null, rowStatus: "ok" | "zero" | "nodata", unit: string) {
+  const title = `${year}년 ${month}월`;
+  const n = (v: number) => `${Math.round(v).toLocaleString("ko-KR")}${unit}`;
+  if (value === null) return { kind: "nodata" as HeatKind, text: "—", title, lines: ["자료 없음 — 자료 범위 밖이거나 집계 중인 달이라 비교하지 않습니다."] };
+  if (rowStatus === "zero" || !mean) return { kind: "base0" as HeatKind, text: "×", title, lines: [`${year}년 출고가 0이라 비교 기준(그해 월평균)이 0 — 차이를 낼 수 없습니다.`] };
+  const index = value / mean;
+  const diff = value - mean;
+  const head = value === 0 ? "출고 없음 (실제 0)" : `실제 출고 ${n(value)}`;
+  const sentence =
+    value === 0
+      ? `그해 평소 한 달에 ${n(mean)} 나가던 것에 비해 이 달은 출고가 없었습니다.`
+      : `그해 평소보다 ${heatPct(index).replace(/^[+−]/, "")} ${diff >= 0 ? "많이" : "적게"} 출고됐습니다.`;
+  return {
+    kind: (value === 0 ? "zero" : "ok") as HeatKind,
+    index,
+    text: value === 0 ? "없음" : heatPct(index),
+    title,
+    lines: [`${head} · 그해 월평균 ${n(mean)} · 차이 ${diff >= 0 ? "+" : "−"}${n(Math.abs(diff))} (${heatPct(index)})`, sentence],
+  };
+}
+
+/** 계절 TOP 10 근거: 집중된 달의 연도별 출고량과 그해 월평균 */
+export type PeakEvidence = {
+  month: number;
+  /** 평소 = 분석 기간 전체 월평균(모든 달·모든 해) */
+  overallMean: number;
+  /** 그 달의 5년 평균 */
+  monthMean: number;
+  years: { year: number; value: number; yearMean: number; complete: boolean }[];
+};
+export const REPEAT_MIN_YEARS = 4;
+export function peakPattern(e: PeakEvidence) {
+  const comparable = e.years.filter((y) => y.complete && y.yearMean > 0);
+  const over = comparable.filter((y) => y.value > y.yearMean);
+  const total = e.years.reduce((s, y) => s + y.value, 0);
+  const top = e.years.reduce((a, b) => (b.value > a.value ? b : a), e.years[0] ?? { year: 0, value: 0, yearMean: 0, complete: false });
+  const share = total > 0 ? top.value / total : 0;
+  const kind = over.length >= REPEAT_MIN_YEARS ? "repeat" : share >= 0.5 && over.length <= 2 ? "spike" : "partial";
+  const label =
+    kind === "repeat"
+      ? `여러 해 반복 — ${comparable.length}개 해 중 ${over.length}개 해에서 그해 월평균보다 많음`
+      : kind === "spike"
+        ? `한 해 대량 출고로 높아짐 — ${top.year}년 ${e.month}월이 5년 같은 달 합계의 ${Math.round(share * 100)}%`
+        : `일부 해만 — ${comparable.length}개 해 중 ${over.length}개 해에서 그해 월평균보다 많음`;
+  return { kind, over: over.length, comparable: comparable.length, label, badge: kind === "repeat" };
+}

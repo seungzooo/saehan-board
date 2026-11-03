@@ -51,3 +51,24 @@ describe("품목 차트 설명", () => {
     expect(s.points[6].detail.lines[1]).toBe("평소(전체 월평균)의 2.00배 = +100% · 성수기");
   });
 });
+
+import { yearlyTotalsView } from "@/lib/analytics/explain";
+describe("연도별 합계와 전년 대비 증가율", () => {
+  const normal = new Map<string, number>();
+  for (let m = 1; m <= 12; m++) {
+    normal.set(`2024-${String(m).padStart(2, "0")}`, 100);
+    normal.set(`2025-${String(m).padStart(2, "0")}`, 110);
+  }
+  normal.set("2026-01", 50);
+  const done = (ym: string) => ym >= "2024-01" && ym <= "2026-01";
+  const v = yearlyTotalsView([2024, 2025, 2026], normal, done, null);
+  it("완료된 해는 1~12월 합계와 증가율", () => {
+    expect(v.table.rows[0]).toEqual(["2024년", "1,200개", "1~12월", "—"]); // 2023 자료 없음
+    expect(v.table.rows[1]).toEqual(["2025년", "1,320개", "1~12월", "+10%"]);
+    expect(v.points[1].label).toBe("2025 +10%");
+  });
+  it("일부 달만 완료된 해는 전년 같은 달끼리 (동기간)", () => {
+    expect(v.table.rows[2]).toEqual(["2026년", "50개", "1월", "−55%"]);
+    expect(v.points[2].detail.lines[1]).toBe("전년 1월 동기간 110개 대비 −55%");
+  });
+});

@@ -173,3 +173,19 @@ test.describe("간헐 출고 품목", () => {
     await expect(page.getByTestId("month-end-note")).toHaveCount(0);
   });
 });
+
+test("[전체 기간]에만 연도별 정상 출고 합계 + 전년 대비 증가율", async ({ page }) => {
+  await page.goto("/analytics?year=2025");
+  await expect(page.getByTestId("yearly-totals")).toHaveCount(0);
+  await page.getByTestId("year-buttons").getByRole("link", { name: "전체 기간" }).click();
+  const yt = page.getByTestId("yearly-totals");
+  await expect(yt).toBeVisible();
+  await yt.getByTestId("yearly-chart-table").locator("summary").click();
+  const rows = yt.getByTestId("yearly-chart-table").locator("tbody tr");
+  await expect(rows).toHaveCount(5);
+  await expect(rows.nth(0)).toContainText("2021년");
+  await expect(rows.nth(4)).toContainText(/2025년.*1~12월.*[+−]\d+%/);
+  await rows.nth(4).click();
+  await expect(yt.getByTestId("yearly-chart-detail")).toContainText(/2025년 \(1~12월\)/);
+  await expect(yt.getByTestId("yearly-chart-detail")).toContainText(/전년 [\d,]+개 대비 [+−]\d+%/);
+});
