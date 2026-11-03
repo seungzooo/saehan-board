@@ -1,3 +1,4 @@
+import { STALE_AFTER_HOURS } from "@/config/stock";
 import PinGate from "@/components/PinGate";
 import type { UploadKind } from "@/config/excel-mapping";
 import { cachedCompletionInfo } from "@/lib/analytics/cached";
@@ -53,6 +54,28 @@ async function UploadPageInner({ searchParams }: { searchParams: Promise<{ kind?
           })}
         </div>
       </header>
+
+      <details data-testid="ops-guide" className="rounded-lg border border-zinc-200 p-3 text-sm text-zinc-700">
+        <summary className="cursor-pointer font-semibold">운영 안내 — 재고 파일 올리기</summary>
+        <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
+          <li>
+            <b>누가·언제:</b> 생산지원팀 재고 담당자가 매일 오전(업무 시작 후 10시까지 권장) ERP에서 재고 엑셀을 내려받아 올립니다. 시각·담당은 회사 확정 전
+            운영 가정입니다.
+          </li>
+          <li>
+            <b>입력:</b> &ldquo;집계 기준 시각&rdquo;에 ERP에서 재고를 조회한 시각을 넣고, 사후 불량이 파일에 반영됐는지 고릅니다(둘 다 필수). 미리보기에 직전 기준
+            이후 입력된 불량이 보이면 그 근거로 답하세요.
+          </li>
+          <li>
+            <b>올리지 않으면:</b> 품목의 집계 기준 시각에서 {STALE_AFTER_HOURS}시간(<code>config/stock.ts STALE_AFTER_HOURS</code>)이 지나면 영업 화면에 &ldquo;오늘 자료
+            미반영&rdquo;이 표시됩니다. 마지막 확인 수량과 시각은 보이지만 요청 수량 판정(충족·부족)은 보류됩니다. 그 사이 앱에 입력한 불량·출고는 계속 차감됩니다.
+          </li>
+          <li>
+            <b>잘못 올렸을 때:</b> 아래 &ldquo;이전 기준재고로 복구&rdquo;를 누르면 직전 파일이 다시 기준이 됩니다(업로드 상세에서도 가능). 현재 기준보다 이전 집계
+            시각의 파일은 앱이 받지 않습니다. 같은 파일·같은 설정은 다시 저장되지 않습니다.
+          </li>
+        </ul>
+      </details>
 
       <UploadForm initialKind={initialKind} />
 

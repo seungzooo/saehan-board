@@ -67,7 +67,7 @@ export default async function StockListPage({ searchParams }: { searchParams: Pr
         <BasisLine basis={stockBasis} />
       </header>
 
-      <Link href="/stock/customers" className="self-start text-sm text-blue-600">
+      <Link href="/stock/customers" className="flex min-h-12 items-center self-start text-sm text-blue-600">
         거래처로 찾기 →
       </Link>
       <nav className="flex flex-wrap gap-1 text-sm" aria-label="목록 종류">

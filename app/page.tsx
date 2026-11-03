@@ -21,7 +21,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pb-8">
       <StockSearchBox initialQuery={q} includeDormant={includeDormant} />
-      <Link href="/stock/customers" data-testid="customer-entry" className="-mt-1 self-end text-sm text-blue-600">
+      <Link href="/stock/customers" data-testid="customer-entry" className="-my-2 flex min-h-12 items-center self-end px-1 text-sm text-blue-600">
         거래처로 찾기 →
       </Link>
       {query ? (
