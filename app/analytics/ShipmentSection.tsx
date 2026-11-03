@@ -1,6 +1,8 @@
 "use client";
 
-import { AllPeriodChart, YearMonthChart } from "@/components/charts";
+import PickChart from "@/components/PickChart";
+import { COLOR_SHIPMENT } from "@/components/charts";
+import { monthView } from "@/lib/analytics/explain";
 import {
   allSeries,
   buildContext,
@@ -8,6 +10,7 @@ import {
   compareYear,
   describeComparison,
   formatUnits,
+  monthStatus,
   monthSpanLabel,
   shiftYm,
   yearSeries,
@@ -103,6 +106,12 @@ export default function ShipmentSection({
     return { line: summaryLine(label, summary), intermittent: isIntermittent(recent), monthEnd: isMonthEndOnly(item) };
   }, [item, view.points, year]);
 
+  // 막대·점을 누르면 펼칠 설명과 표 — 같은 값
+  const pick = useMemo(
+    () => monthView(view.points, normal, boxSize, { labelMode: year === "all" ? "ym" : "month", itemRows: item?.rows, isComplete: (ym) => monthStatus(ym, ctx) === "ok" }),
+    [view.points, normal, boxSize, year, item, ctx],
+  );
+
   const lines = describeComparison(view.comparison, boxSize);
   const c = view.comparison;
 
@@ -146,16 +155,21 @@ export default function ShipmentSection({
         )}
         <p className="text-xs text-zinc-500">
           {item
-            ? `${unitNote} · 막대를 누르면 그 달의 정확한 수량 · 막대 없음 = 출고 없음 또는 자료 없음(눌러서 구분)`
-            : `${unitNote} · 점을 누르면 그 달의 정확한 수량 · 끊긴 구간 = 자료 없음/집계 중, 0 = 집계 완료된 실제 0`}
+            ? `${unitNote} · 막대 없음 = 출고 없음 또는 자료 없음(눌러서 구분)`
+            : `${unitNote} · 끊긴 구간 = 자료 없음/집계 중, 0 = 집계 완료된 실제 0`}
         </p>
       </div>
 
-      {year === "all" ? (
-        <AllPeriodChart points={view.points} boxSize={boxSize} unit={unit} bars={!!item} />
-      ) : (
-        <YearMonthChart points={view.points} boxSize={boxSize} unit={unit} bars={!!item} />
-      )}
+      <PickChart
+        key={String(year)}
+        testid={year === "all" ? "all-period-chart" : "year-month-chart"}
+        points={pick.points}
+        table={pick.table}
+        series={[{ name: "정상 출고", color: COLOR_SHIPMENT, kind: item ? "bar" : "line" }]}
+        yUnit={unit}
+        hideXTicks={year === "all"}
+        yearMarks={year === "all" ? view.points.flatMap((p, i) => (p.month === 1 ? [{ index: i, label: `${p.ym.slice(0, 4)}년` }] : [])) : []}
+      />
 
       {itemView?.intermittent && (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="intermittent-note">

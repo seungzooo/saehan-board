@@ -1,4 +1,4 @@
-import { ChartHead, LagChart, ReturnsChart, SeasonChart, TrendChart } from "@/components/charts";
+import { ChartHead, LagChart } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
 import { cachedAnalysisBasis, cachedCompletionInfo, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
 import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
@@ -17,7 +17,11 @@ import { contextOf, unitsOf, type CompletionInfo, type PeriodData } from "@/lib/
 import { formatDateTime } from "@/lib/format";
 import { availableText, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
 import Link from "next/link";
+import Section from "./Section";
 import ShipmentSection from "./ShipmentSection";
+import PickChart from "@/components/PickChart";
+import { COLOR_PRODUCTION, COLOR_SHIPMENT } from "@/components/charts";
+import { returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +44,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-4">
+    <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-4 lg:max-w-5xl lg:px-8">
       <header className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-2">
           <h1 className="text-xl font-bold">생산·판매 분석</h1>
@@ -215,7 +219,6 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
   const currentMonth = seoulMonth();
   const st = stockStatus(stock, days);
   const nowRow = a.seasonal[currentMonth - 1];
-  const peaks = a.seasonal.filter((r) => (r.index ?? 0) >= PEAK_INDEX).map((r) => r.month);
   const range = a.seasonRange ? `${a.seasonRange.from}~${a.seasonRange.to}` : "자료 없음";
   const lagRange = a.lagRange ? `${a.lagRange.from}~${a.lagRange.to}` : "자료 없음";
   const returnRate = a.normalTotal > 0 ? (a.returnsTotal / a.normalTotal) * 100 : null;
@@ -253,13 +256,13 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
       {/* 생산·판매 비교 (교집합 분석) */}
       <section>
         <ChartHead title={`최근 ${TREND_MONTHS}개월 생산·판매 비교`} unit={unit} basis={`${a.trend[0]?.yearMonth}~${a.trend.at(-1)?.yearMonth} · 연도 버튼과 무관`} />
-        <TrendChart data={a.trend} boxSize={boxSize} />
+        <PickChart testid="trend-chart" {...trendView(a.trend, boxSize)} yUnit={unit} hideXTicks series={[{ name: "생산", color: COLOR_PRODUCTION, kind: "line" }, { name: "정상 출고", color: COLOR_SHIPMENT, kind: "line" }]} />
         <p className="text-xs text-zinc-500">
           생산 = A급, 본가공입고 + 재가공입고 (재가공투입 제외). 판매 = 정상 출고. 둘 다 낱개 수량{boxSize ? `을 1박스 ${boxSize}개로 나눠 박스로 표시` : " 그대로"}.
         </p>
         <div className="mt-2" data-testid="returns">
           <ChartHead title="월별 반품 (판매와 별도)" unit={unit} basis={`${a.trend[0]?.yearMonth}~${a.trend.at(-1)?.yearMonth}`} />
-          <ReturnsChart data={a.trend} boxSize={boxSize} />
+          <PickChart testid="returns-chart" {...returnsView(a.trend, boxSize)} yUnit={unit} hideXTicks height={140} series={[{ name: "반품", color: "#a1a1aa", kind: "bar" }]} />
           <p className="num text-sm text-zinc-700">
             {TREND_MONTHS}개월 반품 {formatUnits(a.returnsTotal, boxSize)}
             {returnRate !== null && ` — 정상 판매 ${formatUnits(a.normalTotal, boxSize)}의 ${returnRate.toFixed(1)}%`}
@@ -270,34 +273,15 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
       {/* 5년 평균 계절지수 */}
       <section>
         <ChartHead title="계절지수 — 5년 평균 (월 평균 판매 ÷ 전체 월평균)" unit="지수 (1.0 = 평균)" basis={`분석 기간 ${range} · 연도 버튼과 무관`} />
-        <SeasonChart rows={a.seasonal} peak={PEAK_INDEX} />
+        <PickChart
+          testid="season-chart"
+          {...seasonAvgView(a.seasonal, "박스", PEAK_INDEX)}
+          yUnit="평소 대비 (배)"
+          yFormat="index"
+          initialSelected={currentMonth - 1}
+          series={[{ name: "평소 대비", color: COLOR_PRODUCTION, kind: "bar" }]}
+        />
         <p className="text-sm text-zinc-700">{describeSeason(a.seasonal)}</p>
-        <table className="num mt-2 w-full overflow-hidden rounded-lg border border-zinc-200 text-sm">
-          <thead className="bg-zinc-50 text-xs text-zinc-500">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium">월</th>
-              <th className="px-3 py-2 text-right font-medium">지수</th>
-              <th className="px-3 py-2 text-right font-medium">평균 판매(박스 환산)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-200">
-            {a.seasonal.map((r) => {
-              const peak = peaks.includes(r.month);
-              return (
-                <tr key={r.month} className={r.month === currentMonth ? "bg-blue-50" : ""}>
-                  <td className="px-3 py-2">
-                    {r.month}월{r.month === currentMonth && <span className="ml-1 text-xs text-blue-700">이번 달</span>}
-                  </td>
-                  <td className={`px-3 py-2 text-right ${peak ? "font-bold text-blue-800" : ""}`}>
-                    {r.index === null ? "—" : r.index.toFixed(2)}
-                    {peak && <span className="ml-1 text-xs">성수기</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right">{Math.round(r.avg).toLocaleString()}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </section>
 
       {/* 연도별 계절지수 히트맵 */}
@@ -345,36 +329,43 @@ async function Overview({ period, year, link }: { period: PeriodData; year: Year
   const lagRange = o.lagRange ? `${o.lagRange.from}~${o.lagRange.to}` : "자료 없음";
   const range = o.seasonRange ? `${o.seasonRange.from}~${o.seasonRange.to}` : "자료 없음";
 
+  const asOf = `데이터 기준일 ${o.basis.shipmentTo ?? "없음"}`;
   return (
-    <>
-      <ShipmentSection period={period} data={unitsData} initialYear={year} scope="전체 거래처" boxSize={null} />
+    <div className="flex flex-col gap-10">
+      <Section id="monthly" question="매달 얼마나 출고했나?" meta={`선택 연도 기준 · 단위 개(낱개) · ${asOf}`}>
+        <ShipmentSection period={period} data={unitsData} initialYear={year} scope="전체 거래처" boxSize={null} />
+      </Section>
 
+      <Section
+        id="season"
+        question="어느 달에 평소보다 많이 출고됐나?"
+        meta={`분석 기간 ${heatRange} · 단위 개(낱개), 그해 월평균 대비 % · ${asOf}`}
+        answer={`${describeYearly(yearly)} ${describeSeason(seasonal)}`}
+      >
       <section data-testid="year-heatmap">
-        <ChartHead title="연도별 계절지수 — 전체 거래처 정상 출고" unit="지수 (기준 1)" basis={`분석 기간 ${heatRange} · 연도 버튼과 무관`} />
         <YearHeatmap rows={yearly} unit="개" />
-        <p className="mt-1 text-sm text-zinc-700">
-          {describeYearly(yearly)} {describeSeason(seasonal)}
-        </p>
       </section>
+      </Section>
 
+      <Section
+        id="lag"
+        question="생산이 많았던 달에는 출고도 많았을까?"
+        meta={`분석 기간 ${lagRange} · 생산·출고 모두 있는 ${o.intersection.toLocaleString()}품번 월별 합계(박스) · 생산 기준일 ${o.basis.productionTo ?? "없음"}`}
+        answer={describeLagCalendar(o.totalBest)}
+      >
       <section>
-        <ChartHead
-          title={`생산 → 판매 시차 상관 — 교집합 ${o.intersection.toLocaleString()}품번 (k = 0~${MAX_LAG})`}
-          unit="상관계수 r"
-          basis={`분석 기간 ${lagRange} · 월별 합계 · 연도 버튼과 무관`}
-        />
         <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k. 생산·판매를 함께 비교하므로 양쪽 실적이 있는 품번만 합산.</p>
         <LagChart rows={o.totalLags} best={o.totalBest?.lag ?? null} />
         <LagTable rows={o.totalLags} best={o.totalBest?.lag ?? null} />
-        <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(o.totalBest)}</p>
       </section>
+      </Section>
 
+      <Section
+        id="top"
+        question="특정 달에 출고가 몰리는 품목은?"
+        meta={`분석 기간 ${range} · 판매 24개월 이상인 ${o.eligible.toLocaleString()}품목 중 · 단위 품목 포장 단위 · ${asOf}`}
+      >
       <section>
-        <ChartHead
-          title="계절지수 상위 10 품목 (성수기 편차 큰 순)"
-          unit="지수"
-          basis={`분석 기간 ${range} · 판매 24개월 이상인 ${o.eligible.toLocaleString()}품목 중 · 연도 버튼과 무관`}
-        />
         {o.top.length === 0 ? (
           <p className="rounded-lg border border-zinc-200 p-3 text-sm text-zinc-500">조건을 만족하는 품목이 없습니다.</p>
         ) : (
@@ -429,6 +420,7 @@ async function Overview({ period, year, link }: { period: PeriodData; year: Year
           </div>
         )}
       </section>
-    </>
+      </Section>
+    </div>
   );
 }

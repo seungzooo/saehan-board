@@ -79,15 +79,30 @@ test("연도 버튼: 제목·기간·월별 값·비교 수치가 함께 바뀐�
   await expectNoHorizontalScroll(page);
 });
 
-test("한 달을 누르면 정확한 연월·수량·단위", async ({ page }) => {
+test("한 달을 누르면(클릭·키보드·표) 차트 바로 아래에 연월·수량·단위 — 마우스를 올리는 툴팁 없음", async ({ page }) => {
   await page.goto("/analytics?year=2025");
   const dots = page.locator('[data-testid="year-month-chart"] .recharts-line-dot');
   await expect(dots).toHaveCount(12);
   const box = (await dots.nth(2).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("month-tooltip")).toHaveCount(0); // 올리기만 하면 아무것도 안 뜬다
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  const tip = page.getByTestId("month-tooltip");
-  await expect(tip).toContainText("2025년 3월");
-  await expect(tip).toContainText(/정상 출고 [\d,]+개/);
+  const detail = page.getByTestId("year-month-chart-detail");
+  await expect(detail).toContainText("2025년 3월");
+  await expect(detail).toContainText(/정상 출고 [\d,]+개/);
+  await expect(detail).toContainText("전년 같은 달(2024년 3월)");
+  // 키보드: → 로 다음 달
+  await page.getByTestId("year-month-chart-plot").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(detail).toContainText("2025년 4월");
+  // 표로 보기: 같은 값, 행을 눌러도 선택
+  await page.getByTestId("year-month-chart-table").locator("summary").click();
+  const rows = page.getByTestId("year-month-chart-table").locator("tbody tr");
+  await expect(rows).toHaveCount(12);
+  await rows.nth(0).click();
+  await expect(detail).toContainText("2025년 1월");
+  const tableQty = (await rows.nth(0).locator("td").nth(1).innerText()).trim();
+  await expect(detail).toContainText(tableQty);
 });
 
 test("기존 B2B/B2C 주소도 전체 거래처 기준 — 합계가 같고 유형 필터는 없다", async ({ page }) => {
