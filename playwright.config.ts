@@ -11,8 +11,11 @@ export default defineConfig({
   expect: { timeout: 15_000 }, // dev 서버는 분석 전체 기간 렌더에 6초 이상 걸린다
   retries: 0,
   reporter: "list",
+  // 모든 화면이 사내 조회 권한으로 보호된다 — 열람 코드로 한 번 들어가 쿠키를 저장(e2e/global-setup.ts)
+  globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+    storageState: "e2e/.auth/viewer.json",
     // 보호된 Vercel 프리뷰: 프로젝트 설정 > Deployment Protection > Protection Bypass for Automation 값
     ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
       ? { extraHTTPHeaders: { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET, "x-vercel-set-bypass-cookie": "true" } }

@@ -17,7 +17,8 @@
 - Prisma 7 + Supabase PostgreSQL (개발·배포 공통), Vercel 배포. `DATABASE_URL`은 런타임, `DIRECT_URL`은 Prisma CLI에서 사용
 - 엑셀 파싱: `xlsx` (SheetJS)
 - 차트: Recharts
-- 로그인·역할 기반 접근 제어(F8)는 삭제. 대신 **공용 PIN 보호**: 업로드·변동 입력·업로드 취소 화면과 그 서버 액션은 `UPLOAD_PIN` 입력 후 세션 쿠키(12시간)로 접근. 조회 화면은 공개. `UPLOAD_PIN`이 없으면 보호 화면은 "관리자 PIN 미설정"으로 잠긴다.
+- **사내 조회 권한 (2026-11-03):** 모든 화면·RSC·서버 액션을 `proxy.ts`가 막는다. 열람 코드 = 환경변수 `VIEW_CODE`(Vercel production·preview, 값은 저장소·문서에 두지 않음), `/enter`에서 입력하면 서명 쿠키 `sb_view` 30일(`lib/access-core.ts`). 관리 코드(`UPLOAD_PIN`) 세션 `sb_pin`도 조회 권한을 가진다. 권한이 없으면 화면 요청은 `/enter?next=`로 307, 서버 액션·그 밖의 POST는 401(RSC 요청은 Next가 `rsc` 헤더를 proxy 전에 떼어 내 307). 열람 코드만으로는 수정·업로드 불가(각 액션의 `requirePin()`). e2e는 `e2e/global-setup.ts`가 `VIEW_CODE` 환경변수로 들어가 쿠키를 저장한다.
+- 로그인·역할 기반 접근 제어(F8)는 삭제. 대신 **공용 PIN 보호**: 업로드·변동 입력·업로드 취소 화면과 그 서버 액션은 `UPLOAD_PIN` 입력 후 세션 쿠키(12시간)로 접근. 조회 화면은 열람 코드로 보호(위). `UPLOAD_PIN`이 없으면 보호 화면은 "관리자 PIN 미설정"으로 잠긴다.
 
 ## 가용재고 산식
 

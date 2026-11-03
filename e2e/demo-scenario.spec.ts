@@ -43,7 +43,7 @@ async function uploadStock(page: Page, csv: string, name: string, opts: { asOf: 
 test.beforeAll(async ({ browser }) => {
   test.skip(!PIN, "UPLOAD_PIN이 설정되지 않음");
   // 안전장치: 시연 품목이 있는 서버(분리 스키마)인지 먼저 확인
-  const page = await browser.newPage();
+  const page = await browser.newPage({ storageState: "e2e/.auth/viewer.json" });
   // 상태 코드는 믿지 않는다 — 스트리밍 응답은 없는 품목(404 화면)도 200으로 온다. 품명이 실제로 보여야 진행
   await page.goto("/stock/DEMO-A");
   const isDemo = await page.getByRole("heading", { name: "시연용 PET 2L" }).isVisible({ timeout: 15_000 }).catch(() => false);

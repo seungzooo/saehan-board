@@ -52,3 +52,6 @@ next-env.d.ts
 .env*
 /test-results
 /playwright-report
+
+# e2e 로그인 쿠키
+e2e/.auth/
