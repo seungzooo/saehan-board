@@ -208,9 +208,32 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
           </div>
           <div className="text-right">
             <StatusBadge status={st} />
-            <p className="num mt-1 text-sm">
-              예상 소진 <b>{daysText(days)}</b>
-            </p>
+            {(() => {
+              const cell = stockCell(a.product.code, stock, days);
+              const blocked = cell.state === "CHECK" || days.days === null;
+              return blocked ? (
+                <details className="mt-1 text-sm" data-testid="days-reason">
+                  <summary className="num cursor-pointer text-blue-700 underline">
+                    {cell.state === "CHECK" ? "재고 확인 필요" : <>예상 소진 <b>산정 불가</b></>}
+                  </summary>
+                  <div className="mt-1 max-w-xs rounded-md bg-blue-50 p-2 text-left text-xs text-blue-950">
+                    {cell.reasons.map((r) => (
+                      <p key={r}>{r}</p>
+                    ))}
+                    {cell.actions.map((x) => (
+                      <Link key={x.href} href={x.href} className="block font-semibold text-blue-700 underline">
+                        {x.label}
+                      </Link>
+                    ))}
+                  </div>
+                </details>
+              ) : (
+                <p className="num mt-1 text-sm">
+                  예상 소진 <b>{daysText(days)}</b>
+                  {stock.stockAsOf && <span className="block text-xs text-zinc-500">재고 집계 {formatDateTime(stock.stockAsOf)}</span>}
+                </p>
+              );
+            })()}
           </div>
         </div>
         <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium">{describeNow(nowRow.index, currentMonth, days.days)}</p>

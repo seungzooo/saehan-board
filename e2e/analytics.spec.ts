@@ -249,3 +249,26 @@ test("생산·출고 관계: 같은 달/다음 달 … 막대를 누르면 비�
   await expect(d).toContainText("결과: 생산이 많았던 달에는 2개월 뒤 출고도");
   await expect(d).toContainText("출고일이나 납기를 정할 수 없습니다");
 });
+
+test("산정 불가·확인 필요를 누르면 그 품목의 이유와 다음 행동", async ({ page }) => {
+  await page.goto("/analytics");
+  const cell = page.getByTestId("top-row").first().getByTestId("stock-cell");
+  const state = await cell.getAttribute("data-state");
+  await cell.click();
+  const d = page.getByTestId("stock-detail");
+  await expect(d).toBeVisible();
+  if (state === "CHECK") {
+    await expect(d.getByRole("link", { name: "재고 확인 필요 → 품목 상세" })).toBeVisible();
+    await expect(cell).not.toContainText("산정 불가"); // 같은 이유로 경고를 반복하지 않음
+  } else {
+    await expect(cell).toContainText(/박스/);
+    await expect(cell).toContainText(/집계 \d{2}-\d{2} \d{2}:\d{2}/);
+  }
+  // 품목 분석 상단 (TR00951: 간헐 출고 품목)
+  await page.goto("/analytics?code=TR00951");
+  const reason = page.getByTestId("days-reason");
+  if ((await reason.count()) > 0) {
+    await reason.locator("summary").click();
+    await expect(reason.getByRole("link").first()).toHaveText(/재고 확인 필요 → 품목 상세|비교 기간 출고 없음 → 출고 이력/);
+  }
+});
