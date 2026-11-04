@@ -201,3 +201,54 @@ model MonthlyStat {
   @@unique([productCode, yearMonth])
   @@index([yearMonth])
 }
+
+/// 출고 변동 탐지 결과 (lib/events). 실적 업로드·취소·집계 완료 월 수정 때 전부 다시 계산해 저장, 화면은 읽기만.
+/// id는 대상·기간·유형으로 정해져(같은 변동이면 같은 id) 메모가 다시 계산 뒤에도 이어진다.
+model ShipmentEvent {
+  id           String   @id
+  groupKey     String // 같은 사건(전사·거래처·품목 중복)을 묶은 대표 id
+  isLead       Boolean // 묶음의 대표
+  kind         String // SPIKE | DROP | STOP | RESUME | TREND_UP | TREND_DOWN | SEASON_UP | SEASON_DOWN
+  scope        String // ALL | CUSTOMER | PRODUCT | PAIR
+  customerCode String?
+  productCode  String?
+  grain        String // MONTH | WEEK
+  periodStart  String
+  periodEnd    String
+  actual       Float
+  baseline     Float
+  diff         Float
+  impact       Float // |실제 증감 수량| (개)
+  groupImpact  Float // 묶음 안 최대 영향
+  title        String
+  data         Json // baselineDesc·비교 기간·변동 폭·기여·설명 문장
+  createdAt    DateTime @default(now())
+
+  @@index([groupKey])
+  @@index([customerCode])
+  @@index([productCode])
+  @@index([periodEnd])
+}
+
+/// 탐지 결과에 남기는 메모 (관리 코드 보호). 원인 단정이 아니라 확인한 내용 기록
+model ShipmentEventNote {
+  id        Int      @id @default(autoincrement())
+  eventId   String
+  text      String
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
+}
+
+/// 탐지 실행 기록 (화면에 기준·자료 누락 달 표시)
+model ShipmentEventRun {
+  id              Int      @id @default(autoincrement())
+  ranAt           DateTime @default(now())
+  completeThrough String?
+  firstMonth      String?
+  events          Int
+  groups          Int
+  materiality     Float
+  missingMonths   String // 쉼표 구분
+}

@@ -1,5 +1,8 @@
 "use server";
 
+import { prisma } from "@/lib/db";
+import { rebuildShipmentEvents } from "@/lib/events/rebuild";
+
 import type { UploadKind } from "@/config/excel-mapping";
 import { DATA_TAG } from "@/lib/analytics/cached";
 import {
@@ -80,6 +83,8 @@ export async function uploadAction(formData: FormData): Promise<UploadResponse> 
   if (res.status === "saved") {
     // 재고 파일은 실적 집계에 영향이 없다. 그 밖의 업로드는 실적 기반 캐시를 무효화
     if (kind !== "STOCK") updateTag(DATA_TAG);
+    // 출고실적이 바뀌면 변동 탐지 결과를 다시 계산해 저장 (화면은 저장된 결과만 읽는다)
+    if (kind === "SALES") await refreshEvents();
     revalidateAll();
   }
   return res;
@@ -101,6 +106,7 @@ export async function cancelBatchAction(batchId: string): Promise<CancelBatchRes
   const r = await cancelBatch(batchId);
   if (r.ok) {
     updateTag(DATA_TAG);
+    await refreshEvents();
     revalidateAll();
     revalidatePath(`/upload/${batchId}`);
     revalidatePath("/analytics");
@@ -126,6 +132,7 @@ export async function updateCompletionAction(batchId: string, value: string) {
   const r = await updateCompletion(batchId, value);
   if (r.ok) {
     updateTag(DATA_TAG);
+    await refreshEvents();
     revalidatePath(`/upload/${batchId}`);
     revalidatePath("/upload");
     revalidatePath("/analytics");
@@ -138,4 +145,13 @@ function revalidateAll() {
   revalidatePath("/upload");
   revalidatePath("/stock");
   revalidatePath("/adjust");
+}
+
+/** 변동 탐지 다시 계산. 실패해도 업로드 결과는 유지(다음 업로드나 scripts/rebuild-events.ts로 다시) */
+async function refreshEvents() {
+  try {
+    await rebuildShipmentEvents(prisma);
+  } catch (e) {
+    console.error("변동 탐지 다시 계산 실패", e);
+  }
 }
