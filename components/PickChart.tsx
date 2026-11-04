@@ -7,7 +7,7 @@
  * 모든 값·문장은 서버(또는 부모)가 미리 만들어 넘긴다 — 직렬화 가능한 props만 받는다.
  */
 import { useState } from "react";
-import { Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 export type PickSeries = { name: string; color: string; kind: "bar" | "line" };
 export type PickPoint = {
@@ -23,6 +23,8 @@ export type PickPoint = {
 export type PickTable = { headers: string[]; rows: string[][] };
 
 const GRID = "#e4e4e7";
+const Y_AXIS_WIDTH = 52;
+const RIGHT_MARGIN = 12;
 const AXIS = "#71717a";
 const nf = (v: number) => v.toLocaleString("ko-KR", { maximumFractionDigits: 1 });
 
@@ -92,15 +94,20 @@ export default function PickChart({
             move(-1);
           } else if (e.key === "Escape") setSel(null);
         }}
+        onClick={(e) => {
+          // 가로축 한 칸(band) 위치로 직접 계산 — 터치 탭은 마우스 이동 없이 오므로 차트 라이브러리의 활성 항목에 기대지 않는다
+          const r = e.currentTarget.getBoundingClientRect();
+          const left = r.left + Y_AXIS_WIDTH;
+          const width = r.width - Y_AXIS_WIDTH - RIGHT_MARGIN;
+          const x = e.clientX - left;
+          if (x < 0 || x > width || points.length === 0) return;
+          pick(Math.min(points.length - 1, Math.floor((x / width) * points.length)));
+        }}
       >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
-            margin={{ top: yearMarks.length ? 24 : 8, right: 12, bottom: 0, left: 0 }}
-            onClick={(state) => {
-              const idx = state?.activeTooltipIndex ?? state?.activeIndex;
-              pick(idx === undefined || idx === null ? null : Number(idx));
-            }}
+            margin={{ top: yearMarks.length ? 24 : 8, right: RIGHT_MARGIN, bottom: 0, left: 0 }}
             style={{ cursor: "pointer" }}
           >
             <CartesianGrid stroke={GRID} vertical={false} />
@@ -113,7 +120,7 @@ export default function PickChart({
             />
             <YAxis
               tick={{ fontSize: 10, fill: AXIS }}
-              width={52}
+              width={Y_AXIS_WIDTH}
               domain={yDomain}
               tickFormatter={(v: number) => formatTick(v, yFormat)}
               label={{ value: yUnit, position: "insideTopLeft", offset: 0, dy: yearMarks.length ? -22 : -6, fontSize: 10, fill: AXIS }}
@@ -129,8 +136,6 @@ export default function PickChart({
               />
             ))}
             {sel !== null && <ReferenceLine x={points[sel]?.label} stroke="#1d4ed8" strokeOpacity={0.25} strokeWidth={18} />}
-            {/* 상호작용 상태(선택 인덱스)를 받기 위한 빈 툴팁 — 화면에는 아무것도 띄우지 않는다 */}
-            <Tooltip content={() => null} cursor={false} />
             {showLegend && <Legend verticalAlign="top" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, k) =>
               s.kind === "bar" ? (
