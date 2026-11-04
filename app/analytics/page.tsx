@@ -53,6 +53,9 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
       <header className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-2">
           <h1 className="text-xl font-bold">생산·판매 분석</h1>
+          <Link href="/analytics/customers" className="ml-auto text-sm text-blue-600" data-testid="customer-top-link">
+            거래선 TOP 10 →
+          </Link>
           {sp.code && (
             <Link href={link({ year: sp.year })} className="text-sm text-blue-600">
               전체 요약
