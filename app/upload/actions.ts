@@ -17,7 +17,7 @@ import {
 import { requirePin } from "@/lib/pin";
 import { revalidatePath, updateTag } from "next/cache";
 
-const KINDS: UploadKind[] = ["STOCK", "PRODUCTION", "SALES", "PRODUCT", "CUSTOMER"];
+const KINDS: UploadKind[] = ["STOCK", "PRODUCTION", "SALES", "PRODUCT", "CUSTOMER", "INDUSTRY"];
 const MAX_BYTES = 50 * 1024 * 1024;
 /** 로그인 없음(F8 삭제). 업로더는 고정값으로 기록 */
 const ACTOR = "담당자";

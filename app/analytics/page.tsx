@@ -1,7 +1,7 @@
 import { ChartHead } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
-import { cachedAnalysisBasis, cachedCompletionInfo, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
-import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
+import { cachedAnalysisBasis, cachedCompletionInfo, cachedIndustryIndex, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
+import { allSeries, boxSizeOf, formatUnits, monthStatus, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
 import { getLiveStock, MIN_ACTIVE_MONTHS, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
 import {
   describeNow,
@@ -21,7 +21,8 @@ import TopTable from "./TopTable";
 import { stockCell } from "@/lib/analytics/stockCell";
 import PickChart from "@/components/PickChart";
 import { COLOR_PRODUCTION, COLOR_SHIPMENT } from "@/components/charts";
-import { lagAnswer, returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
+import { industrySeasonView, industryView, lagAnswer, returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
+import { INDUSTRY_CODE, INDUSTRY_NAME } from "@/config/excel-mapping";
 import LagPick from "./LagPick";
 
 export const dynamic = "force-dynamic";
@@ -295,7 +296,7 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
 }
 
 async function Overview({ period, year }: { period: PeriodData; year: YearChoice; link?: (p: Record<string, string | undefined>) => string }) {
-  const [o, unitsData] = await Promise.all([cachedOverview(), cachedMonthlyUnits(null)]);
+  const [o, unitsData, industryRows] = await Promise.all([cachedOverview(), cachedMonthlyUnits(null), cachedIndustryIndex()]);
   const live = await getLiveStock(o.top.map((t) => t.code));
   const ctx = contextOf(period);
   const units = unitsOf(unitsData);
@@ -316,6 +317,8 @@ async function Overview({ period, year }: { period: PeriodData; year: YearChoice
   const range = o.seasonRange ? `${o.seasonRange.from}~${o.seasonRange.to}` : "자료 없음";
 
   const asOf = `데이터 기준일 ${o.basis.shipmentTo ?? "없음"}`;
+  const industryMap = new Map(industryRows);
+  const industry = industryView(units.normal, industryMap, (ym) => monthStatus(ym, ctx) === "ok", INDUSTRY_CODE);
   return (
     <div className="flex flex-col gap-10">
       <Section id="monthly" question="매달 얼마나 출고했나?" meta={`선택 연도 기준 · 단위 개(낱개) · ${asOf}`}>
@@ -366,6 +369,62 @@ async function Overview({ period, year }: { period: PeriodData; year: YearChoice
               return { code: r.code, name: r.name, peakMonth: r.peakMonth, peakIndex: r.peakIndex, unitLabel: r.unitLabel, evidence: r.evidence, stock: stockCell(r.code, stock, days) };
             })}
           />
+        )}
+      </Section>
+      <Section
+        id="industry"
+        question="업계 흐름과 같은 방향이었나?"
+        meta={
+          industry.months.length
+            ? `비교 기간 ${industry.months[0]}~${industry.months.at(-1)} · 전년 같은 달 대비 증가율(%) · 업계 ${INDUSTRY_CODE} 출하지수 · 자사 ${asOf}`
+            : `업계 ${INDUSTRY_CODE}(${INDUSTRY_NAME}) 출하지수 자료 없음`
+        }
+        answer={
+          industry.months.length
+            ? `비교한 ${industry.months.length}개월 중 ${industry.sameCount}개월은 시장과 같은 방향, ${industry.months.length - industry.sameCount}개월은 다른 방향이었습니다.`
+            : undefined
+        }
+      >
+        {industry.months.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-zinc-400 p-4 text-sm text-zinc-600" data-testid="industry-empty">
+            KOSIS 광업제조업동향조사 &ldquo;{INDUSTRY_NAME}({INDUSTRY_CODE})&rdquo; 월별 출하지수가 아직 없습니다. 생산지원팀이 업로드 화면 &ldquo;업계 지수&rdquo; 탭에서 CSV(연월, 출하지수)를 올리면
+            자사 출고 증가율과 나란히 보여 줍니다.{" "}
+            <Link href="/upload?kind=INDUSTRY" className="text-blue-600 underline">
+              업계 지수 올리기(관리 코드 필요)
+            </Link>
+          </p>
+        ) : (
+          <>
+            <PickChart
+              testid="industry-chart"
+              points={industry.points}
+              table={industry.table}
+              series={[
+                { name: "자사 정상 출고", color: COLOR_SHIPMENT, kind: "line" },
+                { name: `업계 ${INDUSTRY_CODE}`, color: COLOR_PRODUCTION, kind: "line" },
+              ]}
+              yUnit="전년 동월 대비 %"
+              yFormat="pct"
+              zeroLine
+              hideXTicks={industry.points.length > 24}
+            />
+            <p className="num text-xs text-zinc-500" data-testid="industry-basis">
+              비교 기간 {industry.months[0]}~{industry.months.at(-1)} · 업종 코드 {INDUSTRY_CODE} ({INDUSTRY_NAME}) · KOSIS 광업제조업동향조사 출하지수(업로드 자료) · 같은 달 증가율 부호가 같으면
+              &ldquo;시장과 같은 방향&rdquo;. 방향이 같다/다르다는 사실만 보여 주며 원인을 뜻하지 않습니다.
+            </p>
+            <h3 className="mt-2 text-sm font-semibold text-zinc-800">계절지수 — 자사와 업계 나란히 (같은 비교 기간)</h3>
+            <PickChart
+              testid="industry-season"
+              {...industrySeasonView(units.normal, industryMap, industry.months, INDUSTRY_CODE)}
+              series={[
+                { name: "자사", color: COLOR_SHIPMENT, kind: "bar" },
+                { name: `업계 ${INDUSTRY_CODE}`, color: COLOR_PRODUCTION, kind: "bar" },
+              ]}
+              yUnit="지수 (1=월평균)"
+              yFormat="index"
+              height={200}
+            />
+          </>
         )}
       </Section>
     </div>

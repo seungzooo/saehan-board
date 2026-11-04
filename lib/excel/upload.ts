@@ -18,6 +18,7 @@ import type { PrismaClient } from "@/lib/generated/prisma/client";
 import {
   duplicateCodes,
   importCustomers,
+  importIndustry,
   importProduction,
   importProducts,
   importSales,
@@ -57,6 +58,7 @@ export const UPLOAD_KIND_LABEL: Record<UploadKind, string> = {
   SALES: "출고실적",
   PRODUCT: "제품 마스터",
   CUSTOMER: "거래처",
+  INDUSTRY: "업계 지수",
 };
 
 function sha256(bytes: Uint8Array) {
@@ -152,6 +154,9 @@ export async function processUpload(
             break;
           case "CUSTOMER":
             r = await importCustomers(tdb, parsed.rows);
+            break;
+          case "INDUSTRY":
+            r = await importIndustry(tdb, parsed.rows);
             break;
         }
         if (!r.ok) throw new MappingError(r.missing, r.headerFound);

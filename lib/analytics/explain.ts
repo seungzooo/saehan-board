@@ -281,3 +281,69 @@ function withJosa(word: string): string {
   if (c < 0xac00 || c > 0xd7a3) return "와";
   return (c - 0xac00) % 28 === 0 ? "와" : "과";
 }
+
+/**
+ * 업계 비교: 자사 월별 정상 출고와 KOSIS 출하지수의 전년 동월 대비 증가율을 같은 축(%)에 두 선으로.
+ * 같은 달 증가율 부호가 같으면 "시장과 같은 방향", 다르면(한쪽이 0 포함) "시장과 다른 방향". 원인은 말하지 않는다.
+ * 비교 대상 달 = 자사·KOSIS 모두 그 달과 전년 같은 달 값이 있는 달(자사는 집계 완료된 달만).
+ */
+export function industryView(company: Map<string, number>, kosis: Map<string, number>, isComplete: (ym: string) => boolean, code: string) {
+  const months = [...kosis.keys()].sort().filter((ym) => {
+    const p = shiftYm(ym, -12);
+    return isComplete(ym) && isComplete(p) && kosis.has(p) && (company.get(p) ?? 0) > 0;
+  });
+  const rows = months.map((ym) => {
+    const p = shiftYm(ym, -12);
+    const c = company.get(ym) ?? 0;
+    const cp = company.get(p) ?? 0;
+    const k = kosis.get(ym)!;
+    const kp = kosis.get(p)!;
+    const cg = (c / cp - 1) * 100;
+    const kg = (k / kp - 1) * 100;
+    const same = (cg > 0 && kg > 0) || (cg < 0 && kg < 0);
+    return { ym, c, cp, k, kp, cg, kg, same };
+  });
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  const sameCount = rows.filter((r) => r.same).length;
+  return {
+    months,
+    sameCount,
+    points: rows.map((r): PickPoint => ({
+      label: `${r.ym.slice(2, 4)}.${r.ym.slice(5, 7)}`,
+      values: [r1(r.cg), r1(r.kg)],
+      detail: {
+        title: `${ymText(r.ym)} · ${r.same ? "시장과 같은 방향" : "시장과 다른 방향"}`,
+        lines: [
+          `자사 정상 출고 ${formatUnits(r.c, null)} (전년 같은 달 ${formatUnits(r.cp, null)}, ${pct(r.cg)})`,
+          `업계 ${code} 출하지수 ${r.k.toLocaleString("ko-KR")} (전년 같은 달 ${r.kp.toLocaleString("ko-KR")}, ${pct(r.kg)})`,
+        ],
+      },
+    })),
+    table: {
+      headers: ["월", "자사 증가율", `업계(${code}) 증가율`, "방향"],
+      rows: rows.map((r) => [ymText(r.ym), pct(r.cg), pct(r.kg), r.same ? "시장과 같은 방향" : "시장과 다른 방향"]),
+    } satisfies PickTable,
+  };
+}
+
+/** 자사·업계 계절지수(같은 비교 기간의 월평균 ÷ 전체 월평균) 나란히 */
+export function industrySeasonView(company: Map<string, number>, kosis: Map<string, number>, months: string[], code: string) {
+  const idx = (m: Map<string, number>) => {
+    const byMonth = Array.from({ length: 12 }, () => [] as number[]);
+    for (const ym of months) byMonth[Number(ym.slice(5, 7)) - 1].push(m.get(ym) ?? 0);
+    const all = byMonth.flat();
+    const mean = all.length ? all.reduce((a, b) => a + b, 0) / all.length : 0;
+    return byMonth.map((v) => (v.length && mean > 0 ? v.reduce((a, b) => a + b, 0) / v.length / mean : null));
+  };
+  const a = idx(company);
+  const b = idx(kosis);
+  const f = (v: number | null) => (v === null ? "—" : `${v.toFixed(2)} (${pct((v - 1) * 100)})`);
+  return {
+    points: a.map((v, i): PickPoint => ({
+      label: `${i + 1}월`,
+      values: [v === null ? null : Math.round(v * 100) / 100, b[i] === null ? null : Math.round(b[i]! * 100) / 100],
+      detail: { title: `${i + 1}월 계절지수 (1 = 그 기간 월평균)`, lines: [`자사 ${f(v)}`, `업계 ${code} ${f(b[i])}`] },
+    })),
+    table: { headers: ["월", "자사", `업계(${code})`], rows: a.map((v, i) => [`${i + 1}월`, f(v), f(b[i])]) } satisfies PickTable,
+  };
+}

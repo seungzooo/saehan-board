@@ -8,7 +8,7 @@
 import { unstable_cache } from "next/cache";
 import { getActivityBasis, getActivityMapData, getManagedCodeList } from "@/lib/activity-data";
 import { getAnalysisBasis, getOverview, getProductAnalysisStatic } from "./query";
-import { getCompletionInfo, getItemShipData, getMonthlyUnitsData, getPeriodData } from "./shipments";
+import { getCompletionInfo, getIndustryIndex, getItemShipData, getMonthlyUnitsData, getPeriodData } from "./shipments";
 
 export const DATA_TAG = "sales-production-data";
 // 스키마(DATABASE_SCHEMA)도 키에 넣는다 — 시연·e2e용 분리 스키마의 값이 운영 캐시와 섞이지 않게
@@ -20,6 +20,7 @@ export const cachedCompletionInfo = unstable_cache(getCompletionInfo, [CACHE_VER
 export const cachedMonthlyUnits = unstable_cache(async (code: string | null) => getMonthlyUnitsData(code ?? undefined), [CACHE_VERSION, "monthly-units"], opts);
 export const cachedAnalysisBasis = unstable_cache(getAnalysisBasis, [CACHE_VERSION, "analysis-basis"], opts);
 export const cachedOverview = unstable_cache(async () => getOverview("ALL"), [CACHE_VERSION, "overview"], opts);
+export const cachedIndustryIndex = unstable_cache(getIndustryIndex, [CACHE_VERSION, "industry-index"], opts);
 export const cachedItemShipData = unstable_cache(async (code: string) => getItemShipData(code), [CACHE_VERSION, "item-ship-data"], opts);
 export const cachedProductAnalysis = unstable_cache(async (code: string) => getProductAnalysisStatic(code, "ALL"), [CACHE_VERSION, "product-analysis"], opts);
 

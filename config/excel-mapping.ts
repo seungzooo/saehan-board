@@ -12,7 +12,7 @@ export type ColumnMapping<F extends string> = {
   [K in F]: { headers: string[]; required: boolean };
 };
 
-export type UploadKind = "STOCK" | "SALES" | "PRODUCTION" | "PRODUCT" | "CUSTOMER";
+export type UploadKind = "STOCK" | "SALES" | "PRODUCTION" | "PRODUCT" | "CUSTOMER" | "INDUSTRY";
 
 /** 재고 엑셀 — 샘플 미수령. 기본 가정: 품번 / 품명/규격 / 재고수량 (박스) */
 export const STOCK_MAPPING = {
@@ -82,12 +82,24 @@ export const CUSTOMER_MAPPING = {
   orderUnit: { headers: ["주문단위", "발주단위"], required: false },
 } satisfies ColumnMapping<"code" | "name" | "type" | "orderUnit">;
 
+/**
+ * 업계 지수: KOSIS 광업제조업동향조사 "플라스틱제품 제조업(C222)" 월별 출하지수(원지수). 한 행 = 한 달.
+ * 연월은 2021-01 · 2021.01 · 202101 · "2021. 01" 모두 받는다.
+ */
+export const INDUSTRY_CODE = "C222";
+export const INDUSTRY_NAME = "플라스틱제품 제조업";
+export const INDUSTRY_MAPPING = {
+  yearMonth: { headers: ["연월", "시점", "기간", "년월", "월"], required: true },
+  index: { headers: ["출하지수", "지수", "C222", "플라스틱제품", "값"], required: true },
+} satisfies ColumnMapping<"yearMonth" | "index">;
+
 export const MAPPINGS: Record<UploadKind, ColumnMapping<string>> = {
   STOCK: STOCK_MAPPING,
   SALES: SALES_MAPPING,
   PRODUCTION: PRODUCTION_MAPPING,
   PRODUCT: PRODUCT_MAPPING,
   CUSTOMER: CUSTOMER_MAPPING,
+  INDUSTRY: INDUSTRY_MAPPING,
 };
 
 /** 전표구분 코드 중 생산으로 집계하는 것. 32 재가공투입은 소모라 제외 */

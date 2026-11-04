@@ -13,6 +13,7 @@ import {
   B2B_MIN_SHIPMENT_COUNT,
   CATEGORY_BY_PREFIX,
   CUSTOMER_MAPPING,
+  INDUSTRY_MAPPING,
   PRODUCTION_MAPPING,
   PRODUCT_MAPPING,
   SALES_MAPPING,
@@ -516,4 +517,41 @@ export async function importCustomers(db: Db, sheet: string[][]): Promise<Import
     inserted++;
   }
   return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: created, updated: inserted - created };
+}
+
+/** "2021-01" · "2021.01" · "202101" · "2021. 1" → "2021-01" (아니면 null) */
+export function parseYearMonth(raw: string): string | null {
+  const t = raw.trim().replace(/\s/g, "");
+  const m = t.match(/^(\d{4})[-./년]?(\d{1,2})월?$/);
+  if (!m) return null;
+  const mm = Number(m[2]);
+  return mm >= 1 && mm <= 12 ? `${m[1]}-${String(mm).padStart(2, "0")}` : null;
+}
+
+/** 업계 지수(KOSIS C222 출하지수) — 같은 연월은 새 값으로 갱신 */
+export async function importIndustry(db: Db, sheet: string[][]): Promise<ImportOutcome> {
+  const mapped = applyMapping(sheet, INDUSTRY_MAPPING);
+  if (!mapped.ok) return mapped;
+  const errors: RowError[] = [];
+  let inserted = 0;
+  let skipped = 0;
+  for (const r of mapped.rows) {
+    if (!r.yearMonth && !r.index) {
+      skipped++;
+      continue;
+    }
+    const ym = parseYearMonth(r.yearMonth);
+    const v = toNumber(r.index);
+    if (!ym) {
+      errors.push({ row: r.__row, message: `연월 형식 오류: "${r.yearMonth}" (예: 2021-01)`, kind: "QTY" });
+      continue;
+    }
+    if (Number.isNaN(v) || v <= 0) {
+      errors.push({ row: r.__row, message: `지수 오류: ${ym} "${r.index}"`, kind: "QTY" });
+      continue;
+    }
+    await db.externalIndex.upsert({ where: { yearMonth: ym }, update: { kosisShipmentIndex: v }, create: { yearMonth: ym, kosisShipmentIndex: v } });
+    inserted++;
+  }
+  return { ok: true, inserted, skipped, errors, newProducts: 0, newCustomers: 0, updated: inserted };
 }

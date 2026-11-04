@@ -100,3 +100,9 @@ export async function getItemShipData(code: string): Promise<ItemShipData> {
     monthEndShipments,
   };
 }
+
+/** 업계 지수(KOSIS C222 출하지수) [연월, 지수][] — 업로드 화면 '업계 지수' 탭에서 저장 */
+export async function getIndustryIndex(): Promise<[string, number][]> {
+  const rows = await prisma.externalIndex.findMany({ orderBy: { yearMonth: "asc" } });
+  return rows.map((r) => [r.yearMonth, r.kosisShipmentIndex]);
+}

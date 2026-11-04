@@ -24,6 +24,11 @@ const TABS: { kind: UploadKind; label: string; hint: string }[] = [
   { kind: "SALES", label: "출고실적", hint: "연도별 판매실적 파일. 이미 있는 행(같은 출고일자·품번·전표번호)은 건너뜁니다." },
   { kind: "PRODUCT", label: "제품 마스터", hint: "품번 / 품명/규격 / 포장단위수량 / 가로·세로·높이(mm)" },
   { kind: "CUSTOMER", label: "거래처", hint: "거래선 / 구분(B2B·B2C) / 주문단위(차량·박스)" },
+  {
+    kind: "INDUSTRY",
+    label: "업계 지수",
+    hint: "KOSIS 광업제조업동향조사 '플라스틱제품 제조업(C222)' 월별 출하지수(원지수) CSV·엑셀. 필수 컬럼: 연월(2021-01·202101 등), 출하지수. 같은 연월은 새 값으로 갱신됩니다. 분석 화면 '업계 흐름과 같은 방향이었나?'에 쓰입니다.",
+  },
 ];
 
 /** datetime-local 입력값(서울 로컬) → "YYYY-MM-DDTHH:mm:00+09:00" */
@@ -381,6 +386,8 @@ function summarize(kind: UploadKind, r: Extract<UploadResponse, { status: "saved
       return `제품 신규 ${n(x.newProducts)}, 갱신 ${n(x.updated ?? 0)}`;
     case "CUSTOMER":
       return `거래처 신규 ${n(x.newCustomers)}, 갱신 ${n(x.updated ?? 0)}`;
+    case "INDUSTRY":
+      return `업계 지수 ${n(x.inserted)}개 달 저장(같은 연월은 갱신)`;
   }
 }
 

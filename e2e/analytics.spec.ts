@@ -272,3 +272,19 @@ test("산정 불가·확인 필요를 누르면 그 품목의 이유와 다음 �
     await expect(reason.getByRole("link").first()).toHaveText(/재고 확인 필요 → 품목 상세|비교 기간 출고 없음 → 출고 이력/);
   }
 });
+
+test("업계 비교 영역: 자료가 없으면 업로드 안내(관리 코드 보호 탭), 원인 단정 표현 없음", async ({ page }) => {
+  await page.goto("/analytics");
+  const sec = page.getByTestId("section-industry");
+  await expect(page.getByTestId("question-industry")).toHaveText("업계 흐름과 같은 방향이었나?");
+  await expect(sec).toContainText("C222");
+  if ((await page.getByTestId("industry-empty").count()) > 0) {
+    await expect(sec.getByRole("link", { name: /업계 지수 올리기/ })).toHaveAttribute("href", "/upload?kind=INDUSTRY");
+  } else {
+    await expect(page.getByTestId("industry-basis")).toContainText("업종 코드 C222");
+  }
+  await expect(sec).not.toContainText(/시장 요인|자사 요인/);
+  // 업로드 화면 탭은 관리 코드로 보호
+  await page.goto("/upload?kind=INDUSTRY");
+  await expect(page.getByRole("heading", { name: "관리자 확인" })).toBeVisible();
+});
