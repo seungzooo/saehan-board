@@ -16,6 +16,9 @@ import { formatDateTime } from "@/lib/format";
 import { availableText, daysText, productInfoText, StatusBadge, stockStatus } from "@/lib/stockDisplay";
 import Link from "next/link";
 import Section from "./Section";
+import EventList from "@/components/EventList";
+import { getRecentGroups } from "@/lib/events/query";
+import { pinState } from "@/lib/pin";
 import ShipmentSection from "./ShipmentSection";
 import TopTable from "./TopTable";
 import { stockCell } from "@/lib/analytics/stockCell";
@@ -321,6 +324,8 @@ async function Overview({ period, year }: { period: PeriodData; year: YearChoice
   const industry = industryView(units.normal, industryMap, (ym) => monthStatus(ym, ctx) === "ok", INDUSTRY_CODE);
   return (
     <div className="flex flex-col gap-10">
+      <NotableSection />
+
       <Section id="monthly" question="매달 얼마나 출고했나?" meta={`선택 연도 기준 · 단위 개(낱개) · ${asOf}`}>
         <ShipmentSection period={period} data={unitsData} initialYear={year} scope="전체 거래처" boxSize={null} />
       </Section>
@@ -428,5 +433,38 @@ async function Overview({ period, year }: { period: PeriodData; year: YearChoice
         )}
       </Section>
     </div>
+  );
+}
+
+/** 이번 기간에 주목할 변화 — 저장된 탐지 결과에서 영향 큰 3건 */
+async function NotableSection() {
+  const [{ run, from, to, groups }, pin] = await Promise.all([getRecentGroups(3).catch(() => ({ run: null, from: null, to: null, groups: [] })), pinState()]);
+  return (
+    <Section
+      id="notable"
+      question="이번 기간에 주목할 변화"
+      meta={
+        run && from && to
+          ? `${from}~${to} 시작된 변화 · 영향(실제 증감 수량) 큰 순 · 단위 개(낱개) · 탐지 ${formatDateTime(new Date(run.ranAt))}`
+          : "탐지 결과 없음"
+      }
+    >
+      {!run ? (
+        <p className="rounded-lg border border-dashed border-zinc-400 p-3 text-sm text-zinc-600" data-testid="notable-empty">
+          아직 변동 탐지를 계산하지 않았습니다. 출고실적을 업로드하면 자동으로 계산됩니다.
+        </p>
+      ) : (
+        <>
+          <EventList groups={groups} canNote={pin === "OK"} testid="notable-list" />
+          <p className="num text-xs text-zinc-500">
+            전체 {run.groups.toLocaleString()}건(전사·거래처·품목 중복 묶음) ·{" "}
+            {run.missingMonths.length ? `자료 누락 달 ${run.missingMonths.join(", ")}은 검사 제외 · ` : "자료 누락 달 없음 · "}
+            <Link href="/analytics/events" className="text-blue-600 underline" data-testid="events-all-link">
+              전체 보기 →
+            </Link>
+          </p>
+        </>
+      )}
+    </Section>
   );
 }
