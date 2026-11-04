@@ -1,17 +1,15 @@
-import { ChartHead, LagChart } from "@/components/charts";
+import { ChartHead } from "@/components/charts";
 import YearHeatmap from "@/components/YearHeatmap";
 import { cachedAnalysisBasis, cachedCompletionInfo, cachedItemShipData, cachedMonthlyUnits, cachedOverview, cachedPeriodData, cachedProductAnalysis } from "@/lib/analytics/cached";
 import { allSeries, boxSizeOf, formatUnits, parseYear, type PeriodContext, type YearChoice } from "@/lib/analytics/periods";
-import { getLiveStock, MAX_LAG, MIN_ACTIVE_MONTHS, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
+import { getLiveStock, MIN_ACTIVE_MONTHS, searchAnalysisProducts, seoulMonth, TREND_MONTHS, type AnalysisBasis } from "@/lib/analytics/query";
 import {
-  describeLagCalendar,
   describeNow,
   describeSeason,
   describeYearly,
   PEAK_INDEX,
   seasonalIndex,
   yearlySeasonal,
-  type LagRow,
 } from "@/lib/analytics/seasonal";
 import { contextOf, unitsOf, type CompletionInfo, type PeriodData } from "@/lib/analytics/shipments";
 import { formatDateTime } from "@/lib/format";
@@ -23,7 +21,8 @@ import TopTable from "./TopTable";
 import { stockCell } from "@/lib/analytics/stockCell";
 import PickChart from "@/components/PickChart";
 import { COLOR_PRODUCTION, COLOR_SHIPMENT } from "@/components/charts";
-import { returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
+import { lagAnswer, returnsView, seasonAvgView, trendView } from "@/lib/analytics/explain";
+import LagPick from "./LagPick";
 
 export const dynamic = "force-dynamic";
 
@@ -112,41 +111,6 @@ function BasisNote({ basis, ctx, completion }: { basis: AnalysisBasis; ctx: Peri
         )}
       </p>
     </div>
-  );
-}
-
-function LagTable({ rows, best }: { rows: LagRow[]; best: number | null }) {
-  return (
-    <table className="num mt-1 w-full table-fixed text-center text-xs" data-testid="lag-table">
-      <thead className="text-zinc-500">
-        <tr>
-          <th className="py-1 text-left font-medium">k</th>
-          {rows.map((r) => (
-            <th key={r.lag} className={`py-1 font-medium ${r.lag === best ? "text-blue-800" : ""}`}>
-              +{r.lag}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td className="py-1 text-left text-zinc-500">r</td>
-          {rows.map((r) => (
-            <td key={r.lag} className={r.lag === best ? "font-bold text-blue-800" : ""}>
-              {r.r === null ? "—" : r.r.toFixed(2)}
-            </td>
-          ))}
-        </tr>
-        <tr>
-          <td className="py-1 text-left text-zinc-500">쌍</td>
-          {rows.map((r) => (
-            <td key={r.lag} className="text-zinc-600">
-              {r.n}
-            </td>
-          ))}
-        </tr>
-      </tbody>
-    </table>
   );
 }
 
@@ -297,14 +261,11 @@ async function ProductView({ code, period, year }: { code: string; period: Perio
         </p>
       </section>
 
-      {/* 시차 상관 */}
-      <section>
-        <ChartHead title={`생산 → 판매 시차 상관 (k = 0~${MAX_LAG})`} unit="상관계수 r (−1~1)" basis={`분석 기간 ${lagRange} · 연도 버튼과 무관`} />
-        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k 의 상관 — 월별 합계가 함께 움직이는 정도 (개별 로트의 출고 시점은 아님)</p>
-        <LagChart rows={a.lags} best={a.best?.lag ?? null} />
-        <LagTable rows={a.lags} best={a.best?.lag ?? null} />
-        <p className="mt-1 text-sm font-medium text-zinc-800">{describeLagCalendar(a.best)}</p>
-        <p className="text-xs text-zinc-500">쌍 = 생산월과 판매월이 모두 자료 범위 안인 달의 수. 쌍이 3개 미만이거나 변동이 없으면 —(산정 불가).</p>
+      {/* 생산·출고 관계 */}
+      <section className="flex flex-col gap-2" data-testid="item-lag">
+        <ChartHead title="생산이 많았던 달에는 출고도 많았을까?" unit="상관계수 (−1~1)" basis={`분석 기간 ${lagRange} · 이 품목 월별 합계 · 연도 버튼과 무관`} />
+        <p className="text-sm font-medium text-zinc-800">{lagAnswer(a.lags, a.best)}</p>
+        <LagPick rows={a.lags} best={a.best?.lag ?? null} criteria="이 품목의 월별 생산(A급, 본가공입고+재가공입고, 재가공투입 제외)과 정상 출고 합계. 두 달 모두 자료 범위 안인 쌍만 셉니다." />
       </section>
     </>
   );
@@ -352,14 +313,14 @@ async function Overview({ period, year }: { period: PeriodData; year: YearChoice
       <Section
         id="lag"
         question="생산이 많았던 달에는 출고도 많았을까?"
-        meta={`분석 기간 ${lagRange} · 생산·출고 모두 있는 ${o.intersection.toLocaleString()}품번 월별 합계(박스) · 생산 기준일 ${o.basis.productionTo ?? "없음"}`}
-        answer={describeLagCalendar(o.totalBest)}
+        meta={`분석 기간 ${lagRange} · 생산·출고 월별 합계(박스) · 생산 기준일 ${o.basis.productionTo ?? "없음"} · 출고 ${asOf}`}
+        answer={lagAnswer(o.totalLags, o.totalBest)}
       >
-      <section>
-        <p className="text-xs font-medium text-zinc-700">방향: 생산월 t 와 판매월 t+k. 생산·판매를 함께 비교하므로 양쪽 실적이 있는 품번만 합산.</p>
-        <LagChart rows={o.totalLags} best={o.totalBest?.lag ?? null} />
-        <LagTable rows={o.totalLags} best={o.totalBest?.lag ?? null} />
-      </section>
+        <LagPick
+          rows={o.totalLags}
+          best={o.totalBest?.lag ?? null}
+          criteria={`품번 선정: 분석 기간에 생산(A급, 본가공입고+재가공입고, 재가공투입 제외)과 정상 출고가 모두 있는 ${o.intersection.toLocaleString()}품번의 월별 합계. 각 시차는 생산한 달과 그 시차만큼 뒤의 출고 달을 짝지어, 두 달 모두 자료 범위 안인 쌍만 셉니다.`}
+        />
       </Section>
 
       <Section

@@ -108,3 +108,30 @@ describe("계절 TOP 10 근거: 반복 성수기와 한 해 대량 출고 구분
     expect(peakPattern({ month: 7, overallMean: 10, monthMean: 16, years })).toMatchObject({ over: 3, comparable: 3, badge: false });
   });
 });
+
+import { lagAnswer, lagLabel, lagView } from "@/lib/analytics/explain";
+describe("생산·출고 관계: 업무 언어 설명", () => {
+  const rows = [
+    { lag: 0, r: 0.8, n: 60 },
+    { lag: 1, r: 0.77, n: 59 },
+    { lag: 2, r: 0.3, n: 58 },
+    { lag: 3, r: null, n: 2 },
+  ];
+  it("축 라벨: 같은 달 / 다음 달 / 2개월 뒤", () => {
+    expect([0, 1, 2, 6].map(lagLabel)).toEqual(["같은 달", "다음 달", "2개월 뒤", "6개월 뒤"]);
+  });
+  it("선택한 막대: 두 비교 대상과 결과, 계수가 비슷하면 비슷한 관계로", () => {
+    const v = lagView(rows, 0);
+    expect(v.points[0].detail.lines[0]).toBe("비교: 생산량(생산한 달) ↔ 같은 달 출고량, 월별 합계 60개 달 쌍");
+    expect(v.points[0].detail.lines[1]).toBe("결과: 생산이 많았던 달에는 같은 달 출고도 뚜렷하게 함께 많았습니다");
+    expect(v.points[0].detail.lines[2]).toContain("다음 달과도 비슷한 관계가 관찰됐습니다");
+    expect(v.points[2].detail.lines[1]).toBe("결과: 생산이 많았던 달에는 2개월 뒤 출고도 약하게 함께 많았습니다");
+    expect(v.points[3].detail.lines[1]).toContain("산정할 수 없습니다");
+    for (const p of v.points) expect(p.detail.lines.at(-1)).toContain("월별 합계 기준이며 개별 로트의 출고 시점은 아님");
+  });
+  it("한 줄 답은 계수 없이, 기존 해석 문구 유지", () => {
+    const a = lagAnswer(rows, rows[0]);
+    expect(a).toBe("동월 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님 (다음 달도 비슷한 관계)");
+    expect(a).not.toMatch(/r=|0\.8/);
+  });
+});

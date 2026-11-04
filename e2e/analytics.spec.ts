@@ -126,13 +126,14 @@ test("품목: 박스 확인 품목은 박스 환산 — 제목·비교 단위 �
   const heat = page.getByTestId("year-heatmap");
   await expect(heat).toContainText("분석 기간");
   await expect(heat.getByTestId("heat-year")).toHaveCount(5);
-  await expect(page.getByTestId("lag-table").locator("thead th")).toHaveCount(8);
+  await expect(page.getByTestId("lag-table").locator("thead th")).toHaveCount(8); // 시차 + 같은 달~6개월 뒤 (계산 기준 안)
   await expectNoHorizontalScroll(page);
 });
 
 test("전체 요약: 연도별 히트맵·시차 상관에 각자 분석 기간", async ({ page }) => {
   await page.goto("/analytics");
   await expect(page.getByTestId("meta-season")).toContainText("분석 기간 2021-01~2025-12");
+  await page.getByTestId("lag-criteria").locator("summary").click();
   await expect(page.getByTestId("lag-table")).toBeVisible();
   await expect(page.getByTestId("shipment-compare")).toContainText("반품");
   await expectNoHorizontalScroll(page);
@@ -229,4 +230,22 @@ test("품목 TOP 10: 근거 보기(연도별 출고·그해 월평균·평균 �
     if (c.state === "CHECK") expect(avail, c.code).toBe("확인필요");
     else expect(c.text.replace(/\s+/g, ""), c.code).toContain(avail.replace("박스", "") + "박스");
   }
+});
+
+test("생산·출고 관계: 같은 달/다음 달 … 막대를 누르면 비교 대상과 결과 문장, 계수는 계산 기준 안", async ({ page }) => {
+  await page.goto("/analytics");
+  await expect(page.getByTestId("question-lag")).toHaveText("생산이 많았던 달에는 출고도 많았을까?");
+  await expect(page.getByTestId("answer-lag")).toContainText("월별 합계 기준이며 개별 로트의 출고 시점은 아님");
+  await expect(page.getByTestId("answer-lag")).not.toContainText("r=");
+  const ticks = page.locator('[data-testid="lag-chart"] .recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value');
+  await expect(ticks.first()).toHaveText("같은 달");
+  await expect(ticks.nth(1)).toHaveText("다음 달");
+  await expect(ticks.nth(2)).toHaveText("2개월 뒤");
+  await page.getByTestId("lag-chart-table").locator("summary").click();
+  await page.getByTestId("lag-chart-table").locator("tbody tr").nth(2).click();
+  const d = page.getByTestId("lag-chart-detail");
+  await expect(d).toContainText("2개월 뒤 비교");
+  await expect(d).toContainText("비교: 생산량(생산한 달) ↔ 그 2개월 뒤 출고량");
+  await expect(d).toContainText("결과: 생산이 많았던 달에는 2개월 뒤 출고도");
+  await expect(d).toContainText("출고일이나 납기를 정할 수 없습니다");
 });

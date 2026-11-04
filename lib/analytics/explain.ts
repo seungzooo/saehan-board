@@ -221,3 +221,63 @@ export function peakPattern(e: PeakEvidence) {
         : `일부 해만 — ${comparable.length}개 해 중 ${over.length}개 해에서 그해 월평균보다 많음`;
   return { kind, over: over.length, comparable: comparable.length, label, badge: kind === "repeat" };
 }
+
+/** 시차 라벨: 같은 달 / 다음 달 / 2개월 뒤 … */
+export function lagLabel(k: number): string {
+  return k === 0 ? "같은 달" : k === 1 ? "다음 달" : `${k}개월 뒤`;
+}
+/** 계수가 이 차이 이내면 "비슷한 관계" */
+export const LAG_SIMILAR = 0.05;
+
+function strength(r: number): string {
+  if (r >= 0.7) return "뚜렷하게 함께 많았습니다";
+  if (r >= 0.4) return "어느 정도 함께 많았습니다";
+  if (r >= 0.2) return "약하게 함께 많았습니다";
+  if (r > -0.2) return "함께 움직이는 관계가 거의 보이지 않았습니다";
+  return "오히려 반대로 움직이는 경향이 보였습니다";
+}
+
+/**
+ * 생산·출고 시차 막대: 막대 = 시차별 상관계수. 선택하면 두 비교 대상과 결과를 문장으로.
+ * 월별 합계끼리의 비교일 뿐이므로 개별 제품의 출고일·납기를 단정하지 않는다.
+ */
+export function lagView(rows: { lag: number; r: number | null; n: number }[], best: number | null) {
+  const valid = rows.filter((r) => r.r !== null) as { lag: number; r: number; n: number }[];
+  const points: PickPoint[] = rows.map((row) => {
+    const when = lagLabel(row.lag);
+    const lines: string[] = [`비교: 생산량(생산한 달) ↔ ${when === "같은 달" ? "같은 달" : `그 ${when}`} 출고량, 월별 합계 ${row.n}개 달 쌍`];
+    if (row.r === null) lines.push("비교한 달 쌍이 3개 미만이거나 변동이 없어 관계를 산정할 수 없습니다.");
+    else {
+      lines.push(`결과: 생산이 많았던 달에는 ${when === "같은 달" ? "같은 달" : when} 출고도 ${strength(row.r)}`);
+      const similar = valid.filter((o) => o.lag !== row.lag && Math.abs(o.r - row.r!) <= LAG_SIMILAR);
+      if (similar.length) {
+        const list = similar.map((o) => lagLabel(o.lag)).join(", ");
+        lines.push(`${list}${withJosa(list)}도 비슷한 관계가 관찰됐습니다 — 어느 시차가 맞다고 단정할 수 없습니다.`);
+      }
+    }
+    lines.push("월별 합계 기준이며 개별 로트의 출고 시점은 아님 — 이 결과로 특정 제품의 출고일이나 납기를 정할 수 없습니다.");
+    return { label: when, values: [row.r], highlight: row.lag === best, detail: { title: `${when} 비교`, lines } };
+  });
+  return {
+    points,
+    table: {
+      headers: ["시차", "상관계수", "비교한 달 쌍"],
+      rows: rows.map((r) => [lagLabel(r.lag), r.r === null ? "산정 불가" : r.r.toFixed(2), `${r.n}개`]),
+    } satisfies PickTable,
+  };
+}
+
+/** 한 줄 답 — 계수·월 수는 '계산 기준'에. 기존 해석 문구 유지 */
+export function lagAnswer(rows: { lag: number; r: number | null; n: number }[], best: { lag: number; r: number | null } | null): string {
+  if (!best || best.r === null) return "생산·출고 관계를 산정할 수 없습니다 (비교할 달이 부족하거나 변동이 없음).";
+  const when = best.lag === 0 ? "동월" : `${best.lag}개월 차이`;
+  const similar = rows.filter((o) => o.lag !== best.lag && o.r !== null && Math.abs(o.r - best.r!) <= LAG_SIMILAR).map((o) => lagLabel(o.lag));
+  return `${when} 생산량과 출고량이 가장 비슷하게 움직임 · 월별 합계 기준이며 개별 로트의 출고 시점은 아님${similar.length ? ` (${similar.join(", ")}도 비슷한 관계)` : ""}`;
+}
+
+/** 받침이 있으면 "과", 없으면 "와" */
+function withJosa(word: string): string {
+  const c = word.charCodeAt(word.length - 1);
+  if (c < 0xac00 || c > 0xd7a3) return "와";
+  return (c - 0xac00) % 28 === 0 ? "와" : "과";
+}
